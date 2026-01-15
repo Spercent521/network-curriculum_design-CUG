@@ -24,7 +24,7 @@ class SerialClient:
         if isinstance(payload, bytes):
             safe = payload.decode('utf-8', errors='ignore')
         else:
-            safe = str(payload)
+            safe = "==" + str(payload) + "=="
         print(f"[DEBUG {ts}] {direction}: {safe}")
         
     def get_available_ports(self):
