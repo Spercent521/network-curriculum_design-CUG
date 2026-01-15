@@ -1,0 +1,70 @@
+% !TEX program = xelatex
+% !TEX bib_program = biber
+
+\documentclass{ctexart}
+
+% 字体与中文设置
+\setmainfont{Times New Roman}
+\setCJKmainfont{Microsoft YaHei}
+
+% 页面与格式设定
+\usepackage[top=2.5cm, bottom=2.5cm, left=3cm, right=3cm]{geometry}
+\usepackage{setspace}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{graphicx}
+\usepackage{caption}
+
+% 修复 fancyhdr 警告：增加页眉高度
+\setlength{\headheight}{13pt}
+
+% 行距
+\setstretch{1.5}
+
+% 标题设定
+\titleformat{\section}{\large\bfseries}{\thesection}{1em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{1em}{}
+\titleformat*{\subsubsection}{\normalsize}
+
+% 页眉页脚
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{计算机网络构建系列实验报告}
+\fancyhead[R]{\thepage}
+
+% 参考文献
+\usepackage[backend=biber, style=numeric, sorting=none]{biblatex}
+\addbibresource{refs.bib}
+
+\begin{document}
+
+\begin{center}
+  % --- 标题 ---
+  {\LARGE \textbf{计算机网络构建系列实验项目报告}}\\[1.5em]
+
+  {\large 姓名: 孙泽龙 \hspace{1em} 学号: 20241003223}\\[1.0em]
+  {\small
+    班级: 191242 \\
+  }
+\end{center}
+
+\vspace{1em}
+\begin{abstract}
+本报告详细记录了“计算机网络构建系列实验项目”的实施过程与结果。项目共包含6个递进式实验，从底层的单机串口通信、双机C/S模式通信，到链路层的简单拓扑多机通信、网络层的跨链路通信，最终实现运输层的可靠传输及应用层的网络管理功能（ping与traceroute）。通过这一系列实验，深入理解并实践了计算机网络的分层架构、协议设计与核心算法实现。
+\end{abstract}
+\vspace{1em}
+
+% 正文部分：按实验章节组织
+\input{sections/experiment1}
+\input{sections/experiment2}
+\input{sections/experiment3}
+\input{sections/experiment4}
+\input{sections/experiment5}
+\input{sections/experiment6}
+\input{sections/summary}
+
+
+% 参考文献部分
+\printbibliography[title={参考文献}]
+
+\end{document}

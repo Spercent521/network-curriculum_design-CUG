@@ -1,0 +1,57 @@
+# LaTeX 编译产生的中间文件和临时文件 —— 适用于大多数 LaTeX 项目
+
+# 中间文件
+*.aux
+*.lof
+*.log
+*.lot
+*.out
+*.toc
+*.fmt
+*.bcf
+*.fot
+*.cb
+*.cb2
+*.brf
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.run.xml
+
+# 参考文献 / 索引生成文件
+*.bbl
+*.blg
+*.ilg
+*.ind
+*.idx
+*.glo
+*.gls
+*.glg
+*.ist
+
+# 版面/幻灯片相关
+*.nav
+*.snm
+*.vrb
+
+# 设备文件 / 中间格式
+*.dvi
+*.ps
+
+# minted 缓存
+_minted-*/
+
+# 临时和备份文件（编辑器）
+*~
+*.swp
+*.swo
+*.bak
+
+# 常见操作系统/IDE 文件夹
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# 如果你不想将生成的 PDF 跟踪到仓库，取消下面行的注释
+# *.pdf
