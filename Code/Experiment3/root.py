@@ -130,36 +130,48 @@ def main():
     print("="*60)
     
     ports = root.get_available_ports()
-    print("可用串口列表:", ports)
-    
     if not ports:
         print("未检测到串口，请检查连接")
         return
+
+    print("\n可用串口列表:")
+    for i, p in enumerate(ports):
+        print(f"  {i+1}. {p}")
 
     # 配置波特率
     baudrate = 9600
     
     # 交互式添加连接
-    print("\n请配置连接的叶子节点 (输入 'done' 结束配置)")
+    print("\n请配置连接的叶子节点")
     while True:
         try:
-            cmd = input("\n请输入端口号 (例如 COM4) [输入 done 完成]: ").strip()
-            if cmd.lower() == 'done':
+            choice = input(f"\n请选择要配置的串口序号 (1-{len(ports)}) [输入 0 或 done 结束]: ").strip()
+            
+            if choice.lower() == 'done' or choice == '0':
                 break
             
-            # 简单检查端口名格式，如果用户只输了 '4' 补全为 'COM4' (windows习惯)
-            if cmd.isdigit():
-                cmd = f"COM{cmd}"
+            if not choice.isdigit():
+                print("请输入数字序号")
+                continue
+                
+            idx = int(choice) - 1
+            if idx < 0 or idx >= len(ports):
+                print(f"无效序号，请输入 1 到 {len(ports)} 之间的数字")
+                continue
+                
+            selected_port = ports[idx]
             
-            # 检查端口是否存在
-            # (这里不做严格检查，允许用户强制指定，因为有时识别有延迟)
-            
-            node_id = input(f"该端口 ({cmd}) 连接的设备ID是? (例如 ID2): ").strip()
+            # 检查是否已经配置过
+            if selected_port in root.listeners:
+                print(f"串口 {selected_port} 已经配置过了，请选择其他串口")
+                continue
+
+            node_id = input(f"该端口 ({selected_port}) 连接的设备ID是? (例如 ID2): ").strip()
             if not node_id:
                 print("设备ID不能为空")
                 continue
 
-            root.add_port(cmd, baudrate, node_id)
+            root.add_port(selected_port, baudrate, node_id)
             
         except Exception as e:
             print(f"配置出错: {e}")

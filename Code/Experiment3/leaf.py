@@ -106,25 +106,41 @@ def main():
     print("="*60)
     
     ports = leaf.get_available_ports()
-    print("可用串口列表:", ports)
+    if not ports:
+        print("未检测到串口，请检查连接")
+        return
+
+    print("\n可用串口列表:")
+    for i, p in enumerate(ports):
+        print(f"  {i+1}. {p}")
     
     # 配置环节
     while True:
         try:
-            port = input("\n请输入连接根节点的串口 (例如 COM5): ").strip()
-            if port.isdigit(): port = f"COM{port}"
+            choice = input(f"\n请选择连接根节点的串口序号 (1-{len(ports)}): ").strip()
+            
+            if not choice.isdigit():
+                print("请输入数字序号")
+                continue
+
+            idx = int(choice) - 1
+            if idx < 0 or idx >= len(ports):
+                print(f"无效序号，请输入 1 到 {len(ports)} 之间的数字")
+                continue
+                
+            selected_port = ports[idx]
             
             my_id = input("请输入本机识别ID (例如 ID2): ").strip()
             if not my_id:
                 print("ID不能为空")
                 continue
                 
-            if leaf.connect(port, 9600, my_id):
+            if leaf.connect(selected_port, 9600, my_id):
                 break
         except KeyboardInterrupt:
             return
         except Exception as e:
-            print(f"配置错误，请重试")
+            print(f"配置错误，请重试: {e}")
 
     print("\n" + "="*60)
     print("操作说明:")
