@@ -32,19 +32,22 @@ class SerialServer:
         ports = serial.tools.list_ports.comports()
         return [p.device for p in ports]
     
-    def open_port(self, port_name, baudrate=9600):
-        """打开串口"""
+    def open_port(self, port_name, baudrate=9600, bytesize=serial.EIGHTBITS, stopbits=serial.STOPBITS_ONE, parity=serial.PARITY_NONE):
+        """打开串口（可选择 7/8 数据位、1/2 停止位、奇偶校验）"""
         try:
             self.ser = serial.Serial(
                 port=port_name,
                 baudrate=baudrate,
-                bytesize=serial.EIGHTBITS,
-                stopbits=serial.STOPBITS_ONE,
-                parity=serial.PARITY_NONE,
+                bytesize=bytesize,
+                stopbits=stopbits,
+                parity=parity,
                 timeout=1
             )
+            parity_label = {serial.PARITY_NONE: 'None', serial.PARITY_EVEN: 'Even', serial.PARITY_ODD: 'Odd'}.get(parity, parity)
+            stop_label = '1' if stopbits == serial.STOPBITS_ONE else '2'
+            data_label = '7' if bytesize == serial.SEVENBITS else '8'
             print(f"[服务器] 串口 {port_name} 打开成功")
-            print(f"         波特率: {baudrate}, 数据位: 8, 停止位: 1, 校验: 无")
+            print(f"         配置: Baud {baudrate}, Data {data_label}, Stop {stop_label}, Parity {parity_label}")
             return True
         except serial.SerialException as e:
             print(f"[错误] 无法打开串口: {e}")
@@ -141,6 +144,28 @@ class SerialServer:
         return True
 
 
+def choose_serial_format():
+    """交互选择串口格式，返回 (bytesize, stopbits, parity, label)"""
+    data_map = {'7': serial.SEVENBITS, '8': serial.EIGHTBITS}
+    stop_map = {'1': serial.STOPBITS_ONE, '2': serial.STOPBITS_TWO}
+    parity_map = {'N': serial.PARITY_NONE, 'E': serial.PARITY_EVEN, 'O': serial.PARITY_ODD}
+
+    def ask(prompt, mapping, default_key):
+        while True:
+            val = input(prompt).strip().upper()
+            if not val:
+                val = default_key
+            if val in mapping:
+                return mapping[val], val
+            print("[错误] 输入无效，请重试")
+
+    data_bits, data_key = ask("请选择数据位 (7/8，默认8): ", data_map, '8')
+    stop_bits, stop_key = ask("请选择停止位 (1/2，默认1): ", stop_map, '1')
+    parity_val, parity_key = ask("请选择校验位 (N/E/O，默认N): ", parity_map, 'N')
+    label = f"{data_key}{parity_key}{stop_key}"
+    return data_bits, stop_bits, parity_val, label
+
+
 def main():
     server = SerialServer()
     
@@ -174,9 +199,13 @@ def main():
             break
         except ValueError:
             print("[错误] 请输入有效的波特率")
+
+    # 选择串口格式（数据位/停止位/校验位）
+    bytesize, stopbits, parity, fmt_label = choose_serial_format()
+    print(f"[服务器] 选用格式: {fmt_label}，波特率 {baudrate}")
     
     # 打开串口
-    if not server.open_port(selected_port, baudrate):
+    if not server.open_port(selected_port, baudrate, bytesize, stopbits, parity):
         return
     
     # 启动服务器
