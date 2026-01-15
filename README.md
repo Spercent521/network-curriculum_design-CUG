@@ -26,18 +26,36 @@
   pip install pyserial
   ```
 
-## 正在开发：Web 可视化界面
+## Web 可视化界面 (New!)
 
-为了更直观地展示网络路由收敛过程及数据包流向，我们正在开发配套的可视化控制台。
+为了更直观地展示网络路由收敛过程及数据包流向，现在已支持基于 React 的可视化控制台。
+
+### 1. 启动后端 (Backend)
+该后端服务作为一个中间件，桥接底层的网络节点逻辑与 WebSocket 接口。
+
+```bash
+cd Web-Interface/Backend
+pip install -r requirements.txt
+python main.py
+```
+
+### 2. 启动前端 (Frontend)
+前端界面提供了网络拓扑图实时绘制和命令控制台。
+
+```bash
+cd Web-Interface/Frontend
+npm install
+npm run dev
+```
+
+### 3. 使用方法
+1.  浏览器打开 `http://localhost:5173`。
+2.  在右侧控制台输入 CLI 命令（如 `ping B`），操作方式与命令行版本一致。
+3.  左侧将实时展示当前节点的路由表拓扑。
 
 *   **技术栈**:
-    *   **Frontend**: React.js, Recoil, React-Force-Graph
+    *   **Frontend**: React.js, Vite, React-Force-Graph
     *   **Backend**: Python FastAPI (WebSocket)
-*   **功能目标**:
-    *   实时显示网络拓扑结构图
-    *   动态展示路由表的收敛与变化
-    *   可视化 Ping/ICMP 数据包的传输路径
-    *   图形化界面发送指令与消息
 
 ## 快速开始
 

@@ -58,6 +58,9 @@ class NetworkNode:
         self.routing_table = {}
         self.rt_lock = threading.Lock()
 
+    def log(self, *args, **kwargs):
+        print(*args, **kwargs)
+
         # Ping/Tracert 状态管理
         # events: {seq: threading.Event}
         # results: {seq: params}
@@ -299,12 +302,12 @@ class NetworkNode:
                 if res and res['type'] == 'REPLY':
                     rtt = res['rtt']
                     rtts.append(rtt)
-                    print(f"来自 {res['src']} 的回复: time={rtt:.1f}ms")
+                    self.log(f"来自 {res['src']} 的回复: time={rtt:.1f}ms")
                 else:
-                    print("请求超时 (异常回复).")
+                    self.log("请求超时 (异常回复).")
                     lost += 1
             else:
-                print("请求超时.")
+                self.log("请求超时.")
                 lost += 1
                 
             # Cleanup
@@ -314,16 +317,16 @@ class NetworkNode:
                 
             time.sleep(1)
 
-        print(f"\nPing statistics for {target_id}:")
+        self.log(f"\nPing statistics for {target_id}:")
         loss_rate = (lost/count)*100
-        print(f"    Packets: Sent = {count}, Received = {count-lost}, Lost = {lost} ({loss_rate:.0f}% loss)")
+        self.log(f"    Packets: Sent = {count}, Received = {count-lost}, Lost = {lost} ({loss_rate:.0f}% loss)")
         if rtts:
             avg = sum(rtts)/len(rtts)
-            print(f"Approximate round trip times in milli-seconds:")
-            print(f"    Minimum = {min(rtts):.1f}ms, Maximum = {max(rtts):.1f}ms, Average = {avg:.1f}ms")
+            self.log(f"Approximate round trip times in milli-seconds:")
+            self.log(f"    Minimum = {min(rtts):.1f}ms, Maximum = {max(rtts):.1f}ms, Average = {avg:.1f}ms")
 
     def do_traceroute(self, target_id, max_hops=15):
-        print(f"\nTracing route to {target_id} over a maximum of {max_hops} hops:\n")
+        self.log(f"\nTracing route to {target_id} over a maximum of {max_hops} hops:\n")
         
         for ttl in range(1, max_hops + 1):
             seq = self.seq_counter
@@ -337,26 +340,26 @@ class NetworkNode:
             # 发送 TTL=ttl 的 Echo Request
             self._send_icmp_echo_request(target_id, seq, ttl=ttl)
             
-            print(f"{ttl:2d}  ", end='', flush=True)
+            self.log(f"{ttl:2d}  ", end='', flush=True)
             
             if evt.wait(3.0):
                 rtt = (time.time() - start_t) * 1000
                 res = self.icmp_results.get(seq)
                 
                 if not res:
-                    print(f"    *     Error")
+                    self.log(f"    *     Error")
                 elif res['type'] == 'EXPIRED':
-                    print(f"  {rtt:6.1f} ms    {res['src']}")
+                    self.log(f"  {rtt:6.1f} ms    {res['src']}")
                 elif res['type'] == 'REPLY':
                     # 到达目的地
-                    print(f"  {rtt:6.1f} ms    {res['src']}")
-                    print("\nTrace complete.")
+                    self.log(f"  {rtt:6.1f} ms    {res['src']}")
+                    self.log("\nTrace complete.")
                     with self.icmp_lock:
                         self.icmp_events.pop(seq, None)
                         self.icmp_results.pop(seq, None)
                     return
             else:
-                print(f"    *        Request timed out.")
+                self.log(f"    *        Request timed out.")
                 
             with self.icmp_lock:
                 self.icmp_events.pop(seq, None)
