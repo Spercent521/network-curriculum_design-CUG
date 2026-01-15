@@ -52,6 +52,11 @@ _minted-*/
 Thumbs.db
 .vscode/
 .idea/
+__pycache__/
 
-# 如果你不想将生成的 PDF 跟踪到仓库，取消下面行的注释
+# 如果你不想
+
+# Python
+__pycache__/
+*.py[cod]将生成的 PDF 跟踪到仓库，取消下面行的注释
 # *.pdf
