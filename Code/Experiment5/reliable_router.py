@@ -39,7 +39,7 @@ HELLO_INTERVAL = 3
 DV_INTERVAL    = 5
 NEIGHBOR_TIMEOUT = 10
 TIMEOUT_RETRANSMIT = 3.0 # 超时重传时间(秒)
-MAX_RETRIES = 3          # 最大重传次数
+MAX_RETRIES = 30         # 最大重传次数
 
 class ReliableRouterNode:
     def __init__(self):
@@ -66,7 +66,7 @@ class ReliableRouterNode:
         
         # 干扰控制
         self.corruption_start_time = None
-        self.CORRUPTION_DURATION = 4.0 # 干扰持续时间(秒) - 覆盖第一次发送重传
+        self.CORRUPTION_DURATION = 2.0 # 干扰持续时间(秒) - 覆盖第一次发送重传
 
     def start(self):
         print("="*60)
