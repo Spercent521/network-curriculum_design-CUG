@@ -148,7 +148,21 @@ class ReliableRouterNode:
         if port_name not in self.active_ports:
             return False
         
-        # 模拟丢包
+        with self.port_locks[port_name]:
+            try:
+                data = (packet_str + '\n').encode('utf-8')
+                self.active_ports[port_name].write(data)
+                return True
+            except Exception as e:
+                print(f"[{port_name}] 发送错误: {e}")
+                return False
+    
+    def _send_to_port_with_simulation(self, port_name, packet_str):
+        """支持模拟的发送（仅用于可靠消息）"""
+        if port_name not in self.active_ports:
+            return False
+        
+        # 模拟丢包（仅在可靠传输时）
         if self.simulate_loss:
             print(f"[Simulate] 模拟丢包 (本应发往 {port_name})")
             self.simulate_loss = False  # 只模拟一次
@@ -294,10 +308,24 @@ class ReliableRouterNode:
                 if t_type == TRANS_TYPE_SYN or t_type == TRANS_TYPE_DATA:
                     is_syn = (t_type == TRANS_TYPE_SYN)
                     if is_syn:
-                        print(f"[RX SYN] 新会话请求 来自{src_id} InitSeq={seq}")
+                        print(f"[RX SYN] 新会话请求 来自{src_id} InitSeq={seq}: {body}")
                         self.expected_seqs[src_id] = seq + 1  # 同步序列号，期望下一个
-                        # 发送 SYN-ACK 确认
-                        self._transport_send_ack(src_id, seq, is_syn_ack=True)
+                        # 检查是否重复或失序
+                        expected = self.expected_seqs.get(src_id, seq)
+                        if seq == expected:
+                            # 新的会话
+                            if body:
+                                print(f"    >>> [交付应用层] {body}")
+                            # 发送 SYN-ACK 确认
+                            self._transport_send_ack(src_id, seq, is_syn_ack=True)
+                        elif seq < expected:
+                            # 重复会话初始化，仍然发送SYN-ACK
+                            print(f"    [重复SYN] Seq={seq}, 期望={expected}. 仍发送SYN-ACK.")
+                            self._transport_send_ack(src_id, seq, is_syn_ack=True)
+                        else:
+                            # 失序会话，暂不回复
+                            print(f"    [失序SYN] Seq={seq}, 期望={expected}. 暂不应答.")
+                            return
                     else:
                         # 普通数据包，发送 ACK
                         print(f"[RX] 收到数据 来自{src_id} Seq={seq}: {body}")
@@ -345,7 +373,7 @@ class ReliableRouterNode:
                 print(f"[Drop] 目标不可达: {dst_id}")
 
     def _network_send(self, target_id, packet_content):
-        """查找路由并发送完整网络层包
+        """查找路由并发送完整网络层包（支持模拟丢包）
         参数 packet_content: 已经是完整的 DATA|Src|Dst|Payload 格式
         """
         with self.rt_lock:
@@ -358,7 +386,8 @@ class ReliableRouterNode:
                 return False
             
             port = route['next_hop_port']
-            self._send_to_port(port, packet_content)
+            # 使用支持模拟的发送方法
+            self._send_to_port_with_simulation(port, packet_content)
             return True
 
     def _initiate_reliable_send(self, target_id, msg):
