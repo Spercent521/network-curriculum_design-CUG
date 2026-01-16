@@ -458,6 +458,22 @@ class NetworkNode:
                         if i['next_hop_port'] in drops and d!=self.my_id: i['cost']=999
             time.sleep(1)
 
+    def _print_table(self):
+        print("\n" + "="*60)
+        print(f"路由表 - MyID: {self.my_id}")
+        print("="*60)
+        print(f"{'Target':<10} {'Cost':<10} {'NextHop':<10} {'Interface':<15}")
+        print("-"*60)
+        with self.rt_lock:
+             # 按Target排序
+            for dest in sorted(self.routing_table.keys()):
+                info = self.routing_table[dest]
+                cost_str = str(info['cost']) if info['cost'] < 999 else "∞"
+                next_hop = info['next_hop_id'] if info.get('next_hop_id') else "-"
+                port = info['next_hop_port']
+                print(f"{dest:<10} {cost_str:<10} {next_hop:<10} {port:<15}")
+        print("="*60 + "\n")
+
     def _input_loop(self):
         while self.running:
             try:
@@ -471,7 +487,7 @@ class NetworkNode:
                     if len(cmd)<2: print("Usage: tracert <ID>")
                     else: self.do_traceroute(cmd[1])
                 elif op == 'table':
-                    print(json.dumps(self.routing_table, indent=2))
+                    self._print_table()
                 elif op == 'send': # 简单的不可靠发送示例
                     if len(cmd)<3: print("Usage: send <ID> <Msg>")
                     else:
