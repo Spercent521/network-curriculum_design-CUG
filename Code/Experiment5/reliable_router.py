@@ -63,6 +63,10 @@ class ReliableRouterNode:
         
         self.simulate_error = False   # 模拟校验错误开关
         self.simulate_loss = False    # 模拟丢包开关
+        
+        # 干扰控制
+        self.corruption_start_time = None
+        self.CORRUPTION_DURATION = 4.0 # 干扰持续时间(秒) - 覆盖第一次发送重传
 
     def start(self):
         print("="*60)
@@ -401,9 +405,18 @@ class ReliableRouterNode:
         chk = self._calculate_checksum(self.my_id, target_id, seq, t_type, msg)
         
         if self.simulate_error:
-            print("[Simulate] 模拟校验码错误 (SYN包校验码将损坏)")
-            chk += 123
-            self.simulate_error = False
+            # 干扰逻辑: 第一次触发起 N 秒内持续干扰
+            if self.corruption_start_time is None:
+               self.corruption_start_time = time.time()
+            
+            elapsed = time.time() - self.corruption_start_time
+            if elapsed < self.CORRUPTION_DURATION:
+               print(f"[Simulate] 模拟校验码错误 (持续干扰中 {elapsed:.1f}s / {self.CORRUPTION_DURATION}s)")
+               chk += 123
+            else:
+               print("[Simulate] 干扰时间结束，恢复正常")
+               self.simulate_error = False
+               self.corruption_start_time = None
         
         tf_str = f"0{SEPARATOR}0{SEPARATOR}{seq}{SEPARATOR}{chk}{SEPARATOR}{t_type}{SEPARATOR}{msg}"
         packet = f"{TYPE_DATA}{SEPARATOR}{self.my_id}{SEPARATOR}{target_id}{SEPARATOR}{tf_str}"
@@ -494,9 +507,11 @@ class ReliableRouterNode:
                 elif op == 'corrupt':
                     if len(parts) > 1 and parts[1] == 'on':
                         self.simulate_error = True
-                        print("✓ 模拟校验错误已开启 (下一次发送的包校验码将错误)")
+                        self.corruption_start_time = None # 重置计时器
+                        print(f"✓ 模拟校验错误已开启 (将在前 {self.CORRUPTION_DURATION}s 内持续干扰)")
                     else:
                         self.simulate_error = False
+                        self.corruption_start_time = None
                         print("✓ 模拟校验错误已关闭")
                 elif op == 'loss':
                     if len(parts) > 1 and parts[1] == 'on':
