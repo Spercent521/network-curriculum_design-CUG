@@ -32,11 +32,14 @@ function App() {
     // This allows the app to work on any port (8000, 10000, etc.) or domain.
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     
-    // For development (Vite default port 5173), we default to localhost:8000
+    // For development (Vite default port 5173), we check URL param ?port=XXXX or default to localhost:8000
     // For production (served by python), window.location.host is correct (e.g. localhost:10000)
-    const host = window.location.port === '5173' 
-        ? 'localhost:8000' 
-        : window.location.host;
+    let host = window.location.host;
+    if (window.location.port === '5173') {
+        const params = new URLSearchParams(window.location.search);
+        const devPort = params.get('port') || '8000';
+        host = `localhost:${devPort}`;
+    }
     
     ws.current = new WebSocket(`${protocol}//${host}/ws`);
     
