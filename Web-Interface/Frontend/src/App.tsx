@@ -27,7 +27,18 @@ function App() {
 
   // --- WebSocket Setup ---
   useEffect(() => {
-    ws.current = new WebSocket("ws://localhost:8000/ws");
+    // Dynamic WebSocket URL
+    // Automatically determines protocol (ws/wss) and host (matches the page's host:port)
+    // This allows the app to work on any port (8000, 10000, etc.) or domain.
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    
+    // For development (Vite default port 5173), we default to localhost:8000
+    // For production (served by python), window.location.host is correct (e.g. localhost:10000)
+    const host = window.location.port === '5173' 
+        ? 'localhost:8000' 
+        : window.location.host;
+    
+    ws.current = new WebSocket(`${protocol}//${host}/ws`);
     
     ws.current.onopen = () => {
       xtermRef.current?.writeln("\x1b[1;32m[System] Connected to Network Backend.\x1b[0m");

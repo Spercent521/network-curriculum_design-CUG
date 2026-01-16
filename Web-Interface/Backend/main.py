@@ -89,4 +89,13 @@ else:
     print(f"Warning: React Build directory not found at {DIST_DIR}")
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import sys
+    port = 8000
+    if len(sys.argv) > 1:
+        try:
+            port = int(sys.argv[1])
+        except ValueError:
+            print(f"Invalid port: {sys.argv[1]}, using default 8000")
+            
+    print(f"Starting Backend on 0.0.0.0:{port}")
+    uvicorn.run(app, host="0.0.0.0", port=port)
