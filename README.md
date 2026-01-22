@@ -62,13 +62,13 @@ conda activate cnetwork
 
 # 安装项目所需的所有依赖 (包含 CLI 和 Web 界面所需库)
 pip install -r requirements.txt
-# 或者手动安装: pip install pyserial fastapi uvicorn websockets python-multipart aiofiles requests
+# 或者手动安装: pip install pyserial fastapi "uvicorn[standard]" python-multipart aiofiles requests pydantic
 ```
 
 > **依赖说明**: 
 > *   `pyserial`: 核心依赖，用于串口通信。
 > *   `requests`: 实验节点用于向可视化后端上报状态。
-> *   `fastapi`, `uvicorn`, `websockets`: 可选依赖，用于支持 Web 可视化界面。
+> *   `fastapi`, `uvicorn`: Web 后端框架及服务器。
 >
 > **硬件连接提示**: 
 > 运行以下实验前，请确保您的电脑插上了 USB-TTL 串口模块，或者使用虚拟串口工具（如 VSPD）创建了成对的虚拟串口。
