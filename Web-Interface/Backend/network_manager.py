@@ -57,6 +57,8 @@ class NetworkManager:
             # For now, keep them but mark inactive?
             current_time = time.time()
             
+            known_ids = set(self.nodes.keys())
+            
             for nid, info in self.nodes.items():
                 is_active = (current_time - info["last_seen"]) < 5.0
                 graph_nodes.append({
@@ -64,26 +66,27 @@ class NetworkManager:
                     "name": nid,
                     "val": 10 if is_active else 5,
                     "color": "#4CAF50" if is_active else "#9E9E9E",
-                    # "table": info["routing_table"] # Too large, maybe send on demand
                 })
                 
-                # Links based on routing table or direct neighbors?
-                # Neighbors is better for physical links.
-                # Routing table next_hops implies logical paths.
-                # Let's use neighbors for 'physical' topology.
                 neighbors = info.get("neighbors", [])
-                # neighbors structure from report: {port: {id: ..., cost: ...}} or list
-                # We'll assume the report sends a simplified list of neighbor IDs.
-                
-                # Deduplicate links? (A->B and B->A is one link)
-                # Frontend is usually fine with A->B.
                 for neighbor_id in neighbors:
-                    # Only add if neighbor is known or we want to show partials
-                    graph_links.append({
-                        "source": nid,
-                        "target": neighbor_id,
-                        "color": "#FFF"
-                    })
+                    # Check if neighbor is unknown, if so, add a ghost node
+                    if neighbor_id not in known_ids and neighbor_id != 'LOCAL':
+                        known_ids.add(neighbor_id)
+                        graph_nodes.append({
+                            "id": neighbor_id,
+                            "name": f"{neighbor_id} (?)",
+                            "val": 5,
+                            "color": "#FFC107" # Yellow for unknown/offline
+                        })
+
+                    # Add link
+                    if neighbor_id != 'LOCAL':
+                        graph_links.append({
+                            "source": nid,
+                            "target": neighbor_id,
+                            "color": "#FFF"
+                        })
 
             return {
                 "nodes": graph_nodes,
