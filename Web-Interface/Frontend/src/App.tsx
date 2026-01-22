@@ -148,77 +148,13 @@ function App() {
 
   // --- Graph Update Logic ---
   const updateGraph = (topo: any) => {
-    // topo.table = { "B": {cost:1, ...}, ... }
-    
-    setGraphData(prevData => {
-        const newNodes = [...prevData.nodes];
-        const newLinks = [...prevData.links];
-        
-        // Helper to find or add node
-        const getOrAddNode = (id: string, isMe = false) => {
-            let n = newNodes.find(x => x.id === id);
-            if (!n) {
-                n = { 
-                    id, 
-                    name: id + (isMe ? " (Me)" : ""), 
-                    val: isMe ? 20 : 10,
-                    color: isMe ? '#4ade80' : '#60a5fa' 
-                };
-                newNodes.push(n);
-            } else if (isMe) {
-                n.name = id + " (Me)";
-                n.val = 20;
-                n.color = '#4ade80';
-            }
-            return n;
-        };
-
-        const me = getOrAddNode(topo.id, true);
-
-        // Process Table
-        Object.keys(topo.table).forEach(dest => {
-            const info = topo.table[dest];
-            const cost = info.cost;
-            const next_hop = info.next_hop;
-            
-            getOrAddNode(dest); // Ensure dest exists
-
-            // Logic: Draw link if next_hop matches dest (Direct Link)
-            // Or if specific routing logic dictates.
-            // Simplified: If cost is low (<999) and next_hop is known neighbor logic
-            // We just add a link if we don't have one? 
-            // Better: Add link from ME to NEXT_HOP (because that is the physical link I use)
-            // But if Next_Hop is Myself (local), skip.
-            
-            if (next_hop && next_hop !== topo.id && next_hop !== 'LOCAL') {
-                 // Ensure next hop node exists
-                 getOrAddNode(next_hop);
-                 
-                 // Add link Me -> NextHop
-                 const linkExists = newLinks.some(l => 
-                    (l.source === topo.id && l.target === next_hop) || 
-                    (l.source === next_hop && l.target === topo.id)
-                 );
-                 
-                 if (!linkExists) {
-                     newLinks.push({ source: topo.id, target: next_hop });
-                 }
-                 
-                 // How do we know NextHop -> Dest? We don't.
-            } else if (cost === 1 || next_hop === dest) {
-                // If it looks like a direct neighbor
-                 const linkExists = newLinks.some(l => 
-                    (l.source === topo.id && l.target === dest) || 
-                    (l.source === dest && l.target === topo.id)
-                 );
-                 if (!linkExists) {
-                     newLinks.push({ source: topo.id, target: dest });
-                 }
-            }
-        });
-
-        return { nodes: newNodes, links: newLinks };
-    });
+    // Backend sends pre-calculated nodes/links
+    // { nodes: [...], links: [...] }
+    if (topo && topo.nodes && topo.links) {
+        setGraphData(topo);
+    } else {
+        console.warn("Received invalid topo data:", topo);
+    }
   };
 
   // --- Resizing Logic ---

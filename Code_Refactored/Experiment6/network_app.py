@@ -176,25 +176,65 @@ class NetworkNode:
             self._log_viz(f"Cmd Error: {e}")
 
     # === 基础通信 ===
+    def _close_port(self, port):
+        """安全关闭并移除故障串口"""
+        if port in self.active_ports:
+            try:
+                Logger.warning(f"[{port}] 检测到通信故障，正在关闭端口...")
+                self.active_ports[port].close()
+            except:
+                pass
+            self.active_ports.pop(port, None)
+            self.port_locks.pop(port, None)
+            
+            # 同时移除该端口的邻居记录
+            with self.neighbors_lock:
+                self.neighbors.pop(port, None)
+                
+            self._log_viz(f"Port {port} removed due to error.")
+
     def _listen_port(self, port):
-        ser = self.active_ports[port]
-        while self.running and ser.is_open:
+        # 只要端口在 active_ports 中，就认为是活跃的
+        while self.running and port in self.active_ports:
+            ser = self.active_ports.get(port)
+            if not ser or not ser.is_open:
+                break
             try:
                 if ser.in_waiting:
                     line = ser.readline().decode('utf-8', errors='ignore').strip()
                     if line: self._handle_packet(line, port)
                 else:
                     time.sleep(0.01)
-            except:
+            except Exception as e:
+                # 读错误通常也意味着掉线
+                Logger.error(f"Read Error on {port}: {e}")
+                self._close_port(port)
                 break
 
     def _send_bytes(self, port, data_str):
         if port not in self.active_ports: return
-        with self.port_locks[port]:
+        
+        # 获取锁
+        lock = self.port_locks.get(port)
+        if not lock: return
+
+        # 尝试发送
+        with lock:
             try:
-                self.active_ports[port].write((data_str + '\n').encode('utf-8'))
+                ser = self.active_ports.get(port)
+                if ser and ser.is_open:
+                    ser.write((data_str + '\n').encode('utf-8'))
             except Exception as e:
-                Logger.error(f"Send Error on {port}: {e}")
+                # 捕获权限错误 (设备拔出) 或 IO 错误
+                if "PermissionError" in str(e) or "拒绝访问" in str(e) or "Access is denied" in str(e):
+                     Logger.error(f"Send Error on {port} (Device disconnected?): {e}")
+                     self._close_port(port)
+                else:
+                     Logger.error(f"Send Error on {port}: {e}")
+                     # 对于其他类型的写错误，可能也需要关闭以防死循环
+                     # 这里暂时选择只在明确断开时关闭，或者重试逻辑（暂不实现重试）
+                     # 为稳健起见，写失败通常意味着物理层问题，关闭是更安全的选择
+                     self._close_port(port)
 
     # === 核心处理 ===
     def _handle_packet(self, raw, port_src):
