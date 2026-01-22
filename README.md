@@ -24,17 +24,22 @@
 本节介绍如何通过命令行运行各个实验。**推荐使用重构后的 `Code_Refactored` 版本**。
 
 ### 2.0 环境准备
-请确保已安装 Python 3.11+ 及串口驱动库。
+请确保已安装 Python 3.11+ 及相关依赖库。为方便管理，我们在根目录下提供了 `requirements.txt`。
 
 ```bash
 # 推荐使用 conda 创建独立环境
 conda create -n cnetwork python=3.11
 conda activate cnetwork
 
-# 安装依赖
-pip install pyserial
+# 安装项目所需的所有依赖 (包含 CLI 和 Web 界面所需库)
+pip install -r requirements.txt
+# 或者手动安装: pip install pyserial fastapi uvicorn websockets python-multipart aiofiles
 ```
 
+> **依赖说明**: 
+> *   `pyserial`: 核心依赖，用于串口通信。
+> *   `fastapi`, `uvicorn`, `websockets`: 可选依赖，用于支持 Web 可视化界面。
+>
 > **硬件连接提示**: 
 > 运行以下实验前，请确保您的电脑插上了 USB-TTL 串口模块，或者使用虚拟串口工具（如 VSPD）创建了成对的虚拟串口。
 

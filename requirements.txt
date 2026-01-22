@@ -1,0 +1,6 @@
+pyserial
+fastapi
+uvicorn
+websockets
+python-multipart
+aiofiles
