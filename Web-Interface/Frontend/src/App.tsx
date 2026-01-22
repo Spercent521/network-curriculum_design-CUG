@@ -205,9 +205,10 @@ function App() {
 
   // Adjust graph on layout change
   useEffect(() => {
+      const h = Math.max(100, window.innerHeight - terminalHeight);
       setGraphDimensions({
           width: window.innerWidth,
-          height: window.innerHeight - terminalHeight
+          height: h
       });
       // Also fit terminal
       if(fitAddonRef.current) {
@@ -217,9 +218,10 @@ function App() {
   
   useEffect(() => {
      const handleResize = () => {
+        const h = Math.max(100, window.innerHeight - terminalHeight);
         setGraphDimensions({
             width: window.innerWidth,
-            height: window.innerHeight - terminalHeight
+            height: h
         });
         if(fitAddonRef.current) try { fitAddonRef.current.fit(); } catch(e) {}
      };
@@ -232,7 +234,7 @@ function App() {
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#0d1117', color: '#fff' }}>
       
       {/* Top: Graph Visualization */}
-      <div style={{ height: graphDimensions.height, overflow: 'hidden', position: 'relative' }}>
+      <div style={{ flex: 1, minHeight: 100, overflow: 'hidden', position: 'relative' }}>
         <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 10, background: 'rgba(0,0,0,0.5)', padding: '5px 10px', borderRadius: 4, fontFamily: 'Segoe UI' }}>
             <span style={{color: '#4ade80'}}>●</span> Graph Visualization
         </div>
@@ -246,35 +248,46 @@ function App() {
           linkColor={() => '#30363d'}
           backgroundColor="#0d1117"
           nodeCanvasObject={(node: any, ctx, globalScale) => {
-            const label = node.name || node.id;
-            const fontSize = 12/globalScale;
-            ctx.font = `${fontSize}px Sans-Serif`;
-            const textWidth = ctx.measureText(label).width;
-            const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.2); 
-
-            // Draw Dot
-            ctx.beginPath();
-            ctx.arc(node.x, node.y, 5, 0, 2 * Math.PI, false);
-            ctx.fillStyle = node.color || '#60a5fa';
-            ctx.fill();
-
-            // Draw Text Background
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-            ctx.fillRect(node.x - bckgDimensions[0] / 2, node.y - bckgDimensions[1] / 2 - 10, bckgDimensions[0], bckgDimensions[1]);
-
-            // Draw Text
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillStyle = '#fff';
-            ctx.fillText(label, node.x, node.y - 10);
+            if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) return;
             
-            // Interaction area
-            node.__bckgDimensions = bckgDimensions; 
+            const label = node.name || node.id;
+            const safeScale = globalScale === 0 ? 1 : globalScale;
+            const fontSize = 12/safeScale;
+            
+            try {
+                ctx.font = `${fontSize}px Sans-Serif`;
+                const textWidth = ctx.measureText(label).width;
+                const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.2); 
+    
+                // Draw Dot
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, 5, 0, 2 * Math.PI, false);
+                ctx.fillStyle = node.color || '#60a5fa';
+                ctx.fill();
+    
+                // Draw Text Background
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                ctx.fillRect(node.x - bckgDimensions[0] / 2, node.y - bckgDimensions[1] / 2 - 10, bckgDimensions[0], bckgDimensions[1]);
+    
+                // Draw Text
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = '#fff';
+                ctx.fillText(label, node.x, node.y - 10);
+                
+                // Interaction area
+                node.__bckgDimensions = bckgDimensions; 
+            } catch (e) {
+                // Ignore canvas errors preventing crash
+            }
           }}
           nodePointerAreaPaint={(node: any, color, ctx) => {
+             if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) return;
              ctx.fillStyle = color;
              const bckgDimensions = node.__bckgDimensions;
-             bckgDimensions && ctx.fillRect(node.x - bckgDimensions[0] / 2, node.y - bckgDimensions[1] / 2 - 10, bckgDimensions[0], bckgDimensions[1]);
+             if (bckgDimensions) {
+                ctx.fillRect(node.x - bckgDimensions[0] / 2, node.y - bckgDimensions[1] / 2 - 10, bckgDimensions[0], bckgDimensions[1]);
+             }
           }}
         />
       </div>
