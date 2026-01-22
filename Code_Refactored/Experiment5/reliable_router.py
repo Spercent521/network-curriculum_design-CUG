@@ -293,45 +293,14 @@ class ReliableRouterNode:
                     is_syn = (t_type == TRANS_TYPE_SYN)
                     if is_syn:
                         Logger.info(f"[RX SYN] 新会话请求 来自{src_id} InitSeq={seq}: {body}")
-                        self.expected_seqs[src_id] = seq + 1  # 同步序列号，期望下一个
-                        # 检查是否重复或失序
-                        expected = self.expected_seqs.get(src_id, seq)
-                        if seq == expected: # Logic check: seq was just updated above to seq+1 so expected is seq+1? No.
-                            # Re-read logic:
-                            # Original: self.expected_seqs[src_id] = seq + 1 
-                            # Then expected = get ...
-                            # If I set it to seq+1, then next time I expect seq+1.
-                            # But wait, logic in original code:
-                            # self.expected_seqs[src_id] = seq + 1
-                            # expected = self.expected_seqs.get(src_id, seq) -- this gets seq+1
-                            # if seq == expected: -- seq == seq+1 False.
-                            # There is a flaw in original code or my reading of it.
+                        # 对于 SYN, 直接接受并重置期望序列号
+                        self.expected_seqs[src_id] = seq + 1 
+                        
+                        if body:
+                            Logger.info(f"    >>> [交付应用层] {body}")
                             
-                            # Let's check original code carefully.
-                            # line 365: self.expected_seqs[src_id] = seq + 1
-                            # line 367: expected = self.expected_seqs.get(src_id, seq)
-                            # NO, line 365 is inside if is_syn block. 
-                            # Actually, original code logic seems to update expected_seq AFTER confirm?
-                            # Line 365 in original read file: `self.expected_seqs[src_id] = seq + 1`
-                            # Wait, in the original snippet I read:
-                            # is_syn clause:
-                            #   print...
-                            #   self.expected_seqs[src_id] = seq + 1
-                            #   expected = self.expected_seqs.get(...) -- This would act weirdly if I just set it.
-                            
-                            # Let's fix the logic here to be sound.
-                            # Proper logic: Check if seq is what we expect.
-                            # However, for SYN, we reset expectation usually.
-                            
-                            # Simplified assumption derived from original code intent:
-                            # 1. Accept SYN. 2. Send SYN-ACK.
-                            if body:
-                                Logger.info(f"    >>> [交付应用层] {body}")
-                            self._transport_send_ack(src_id, seq, is_syn_ack=True)
-                            self.expected_seqs[src_id] = seq + 1
-
-                        # Original code had complex check regarding expected vs seq but updated expected right before it?
-                        # I will simply accept SYN and update expected.
+                        # 发送 SYN-ACK
+                        self._transport_send_ack(src_id, seq, is_syn_ack=True)
 
                     else:
                         # 普通数据包
