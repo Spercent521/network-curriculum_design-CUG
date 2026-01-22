@@ -184,6 +184,8 @@ class NetworkNode:
             elif op == 'send' and len(parts) >= 3:
                 payload = f"{PROTO_TRANSPORT}{SEPARATOR}{' '.join(parts[2:])}"
                 self._network_send(parts[1], payload, DEFAULT_TTL)
+            elif op == 'table':
+                self._print_table()
         except Exception as e:
             self._log_viz(f"Cmd Error: {e}")
 
@@ -571,11 +573,12 @@ class NetworkNode:
             time.sleep(1)
 
     def _print_table(self):
-        print("\n" + "="*60)
-        print(f"路由表 - MyID: {self.my_id}")
-        print("="*60)
-        print(f"{'Target':<10} {'Cost':<10} {'NextHop':<10} {'Interface':<15}")
-        print("-"*60)
+        lines = []
+        lines.append("\n" + "="*60)
+        lines.append(f"路由表 - MyID: {self.my_id}")
+        lines.append("="*60)
+        lines.append(f"{'Target':<10} {'Cost':<10} {'NextHop':<10} {'Interface':<15}")
+        lines.append("-"*60)
         with self.rt_lock:
              # 按Target排序
             for dest in sorted(self.routing_table.keys()):
@@ -583,8 +586,12 @@ class NetworkNode:
                 cost_str = str(info['cost']) if info['cost'] < 999 else "∞"
                 next_hop = info['next_hop_id'] if info.get('next_hop_id') else "-"
                 port = info['next_hop_port']
-                print(f"{dest:<10} {cost_str:<10} {next_hop:<10} {port:<15}")
-        print("="*60 + "\n")
+                lines.append(f"{dest:<10} {cost_str:<10} {next_hop:<10} {port:<15}")
+        lines.append("="*60 + "\n")
+        
+        output = "\n".join(lines)
+        print(output)
+        self._log_viz(output)
 
     def _input_loop(self):
         while self.running:
