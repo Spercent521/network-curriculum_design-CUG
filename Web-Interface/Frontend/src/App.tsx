@@ -38,7 +38,9 @@ function App() {
     if (window.location.port === '5173') {
         const params = new URLSearchParams(window.location.search);
         const devPort = params.get('port') || '8000';
-        host = `localhost:${devPort}`;
+        // Fix: Use the current page's hostname (IP) instead of forcing localhost
+        // This ensures that when accessing via http://192.168.x.x:5173, we connect to ws://192.168.x.x:8000
+        host = `${window.location.hostname}:${devPort}`;
     }
     
     ws.current = new WebSocket(`${protocol}//${host}/ws`);
