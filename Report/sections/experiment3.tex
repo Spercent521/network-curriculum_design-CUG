@@ -1,27 +1,216 @@
 \section{实验三：简单拓扑的多机通信实验（链路层）}
 
 \subsection{功能要求}
-% 简述对应实验的核心目标、需实现的功能点、预期效果
-本实验旨在理解链路层帧传输原理与树形拓扑连接。需实现4台计算机（1台根节点，3台叶子节点）组成的网络中，任意两台设备间的直接数据交付，包括中转转发逻辑。
+本实验在实验二的基础上，扩展为多机通信，构建一个简单的树形拓扑网络，实现数据链路层的帧转发功能。核心目标包括：
+\begin{itemize}
+  \item 理解树形拓扑的网络结构，掌握星型物理连接与树形逻辑拓扑的概念。
+  \item 实现根节点（Root/Switch）的转发功能，维护设备 ID 到串口端口的转发表。
+  \item 实现叶子节点（Leaf）的通信功能，封装/解析数据帧，仅接收匹配自身 ID 的消息。
+  \item 支持根节点主动下行发送消息，验证双向链路的正确性。
+  \item 实现基于 ID 的消息寻址，任意两叶子节点间通过根节点中转完成通信。
+\end{itemize}
+预期效果：不同叶子节点之间的消息能够经根节点正确中转；根节点能够主动发送消息给任意叶子节点；未知目标 ID 的消息被根节点丢弃并给出警告提示。
 
 \subsection{实现思路}
-% 硬件拓扑、功能流程、协议定义
 \subsubsection{硬件拓扑}
+采用一台根节点主机连接多根串口线，分别与多个叶子节点的单串口相连，形成星型物理连接、树形逻辑拓扑。所有链路波特率保持一致（默认 9600 bps）。示例拓扑中，根节点主机（PC1）配备多个 USB 转串口接口卡或多端口串口扩展卡，分别连接三个叶子节点（ID2、ID3、ID4），每个叶子节点仅配备一个串口与根节点相连。若 ID2 想发消息给 ID3，路径为：\texttt{ID2 → Root → ID3}，所有跨叶子的通信必须经根节点中转，因此根节点需要维护设备 ID 到串口端口的转发表以实现正确的帧路由。树形拓扑结构层次清晰，根节点居于中心位置负责转发，叶子节点作为终端设备仅需实现点对点通信逻辑，这种设计简化了叶子节点的复杂度，同时为理解交换机或集线器的工作原理提供了直观的实验基础。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.8\textwidth]{pic/exp3_topology.drawio.png}
+\caption{实验三硬件拓扑示意图}
+\label{fig:exp3_topology}
+\end{figure}
 
 \subsubsection{功能流程}
+整个树形拓扑的多机通信流程涵盖根节点与叶子节点的初始化、帧封装与解析、查表转发及资源清理等多个环节，形成了完整的链路层通信闭环。
+
+\textbf{根节点启动与配置} → 根节点程序启动后，通过交互式界面逐个添加连接的串口端口 → 为每个端口绑定对应的远端设备 ID（如 COM4 连接 ID2、COM5 连接 ID3） → 程序生成转发表（ID → Port 映射） → 为每个端口创建独立的监听线程，确保多端口并发接收而互不阻塞。
+
+\textbf{叶子节点启动} → 叶子节点选择连接到根节点的串口 → 设置本机 ID（如 ID2） → 启动接收线程进入就绪状态，等待接收来自根节点或其他叶子的消息。
+
+\textbf{叶子节点发送} → 用户输入目标 ID 和消息内容 → 程序封装为数据帧（格式：\texttt{SRC\_ID|DST\_ID|PAYLOAD}） → 通过串口发送给根节点。
+
+\textbf{根节点接收与转发} → 根节点的端口监听线程收到帧 → 解析源 ID 和目的 ID → 执行转发决策：若目的 ID 为根节点自身（ROOT）则打印消息；若目的 ID 在转发表中存在则查表获取对应端口并转发该帧，同时输出转发日志；若目的 ID 不存在则丢弃帧并输出警告日志。
+
+\textbf{目标叶子接收} → 目标叶子节点接收帧 → 解析目的 ID → 若匹配自身 ID 则显示消息内容，否则忽略该帧。
+
+\textbf{根节点主动发送} → 根节点可主动向任意 ID 发送消息 → 查找转发表 → 直接发送到对应端口，验证双向链路的正确性。
+
+\textbf{退出清理} → 用户输入 \texttt{exit} 命令 → 所有端口监听线程停止运行 → 串口逐个关闭 → 程序优雅退出。
 
 \subsubsection{协议定义}
+链路层采用自定义帧格式，实现简单的 ID 寻址：
+\begin{itemize}
+  \item \textbf{帧格式}：\texttt{SRC\_ID|DST\_ID|PAYLOAD}，字段以竖线（\texttt{|}）分隔，以换行符（\texttt{\textbackslash n}）作为帧边界。
+  \item \textbf{字段说明}：
+  \begin{itemize}
+    \item \texttt{SRC\_ID}：发送方设备 ID（如 ID2）
+    \item \texttt{DST\_ID}：接收方设备 ID（如 ID3、ROOT）
+    \item \texttt{PAYLOAD}：消息内容（UTF-8 编码）
+  \end{itemize}
+  \item \textbf{寻址机制}：根节点根据 \texttt{DST\_ID} 查转发表，若匹配则转发，否则丢弃。可选支持 \texttt{DST=BROADCAST} 广播模式。
+  \item \textbf{编码格式}：UTF-8 编码，支持中文和英文字符。
+\end{itemize}
 
 \subsection{模块设计}
-% 模块划分、调用关系、接口定义
 \subsubsection{模块划分}
+程序采用模块化设计，主要包含三个模块：
+\begin{itemize}
+  \item \textbf{串口工具层}（\texttt{Code\_Refactored/utils.py}）：复用实验一的串口工具，提供端口扫描、串口创建、格式选择等通用功能。
+  \item \textbf{根节点}（\texttt{Code\_Refactored/Experiment3/root.py}）：
+  \begin{itemize}
+    \item \texttt{RootNode} 类：维护转发表（\texttt{routing\_table}），提供端口添加、消息处理、主动发送等功能。
+    \item \texttt{PortListener} 线程：为每个端口创建独立的监听线程，负责读取串口数据并回调到 \texttt{RootNode.handle\_message}。
+  \end{itemize}
+  \item \textbf{叶子节点}（\texttt{Code\_Refactored/Experiment3/leaf.py}）：
+  \begin{itemize}
+    \item \texttt{LeafNode} 类：负责帧封装/解析、发送和接收消息，仅显示目的为自身 ID 的消息。
+  \end{itemize}
+\end{itemize}
+
+\begin{figure}[htbp]
+\centering
+% TODO: 插入模块调用关系图，展示RootNode管理多个PortListener线程，LeafNode直接调用utils层
+\caption{实验三模块调用关系图}
+\end{figure}
 
 \subsubsection{接口定义}
+关键接口定义如下：
+
+\textbf{根节点接口（RootNode 类）：}
+\begin{itemize}
+  \item \texttt{add\_port(port, baudrate, connected\_id)}：为指定端口创建 \texttt{PortListener} 监听线程，并将 ID 到端口的映射写入转发表。
+  \item \texttt{handle\_message(raw\_data, source\_port)}：处理接收到的消息，解析帧（\texttt{SRC|DST|PAYLOAD}），根据目的 ID 转发或丢弃。
+  \item \texttt{send\_message(target\_id, msg)}：根节点主动发送消息，封装为帧并查表发送到目标端口。
+  \item \texttt{stop()}：停止所有端口监听线程，关闭所有串口。
+\end{itemize}
+
+\textbf{端口监听接口（PortListener 线程）：}
+\begin{itemize}
+  \item \texttt{run()}：监听线程的主循环，持续读取串口数据，回调到 \texttt{RootNode.handle\_message}。
+  \item \texttt{send(data)}：向端口发送数据（线程安全）。
+  \item \texttt{stop()}：停止监听线程，关闭串口。
+\end{itemize}
+
+\textbf{叶子节点接口（LeafNode 类）：}
+\begin{itemize}
+  \item \texttt{connect(port, baudrate, my\_id)}：连接到根节点，设置本机 ID，启动接收线程。
+  \item \texttt{send\_message(target\_id, message)}：封装帧（\texttt{SRC|DST|MSG}）并发送。
+  \item \texttt{\_process\_frame(raw\_data)}：处理接收到的帧，若目的 ID 匹配自身则显示消息。
+  \item \texttt{stop()}：停止接收线程，关闭串口。
+\end{itemize}
 
 \subsection{功能实现}
-% 核心代码、实现效果、性能分析
 \subsubsection{核心代码}
+程序的核心实现要点如下：
+
+\textbf{1. 根节点转发表与消息处理}
+根节点维护两个核心数据结构：
+\begin{itemize}
+  \item \texttt{listeners}：端口名称 → \texttt{PortListener} 对象的映射
+  \item \texttt{routing\_table}：设备 ID → 端口名称的映射
+\end{itemize}
+\texttt{handle\_message} 方法解析帧后，根据目的 ID 查表转发。
+
+\begin{verbatim}
+def handle_message(self, raw_data, source_port):
+    parts = raw_data.split(SEPARATOR, 2)
+    if len(parts) != 3:
+        Logger.debug(f"[收到畸形帧] {raw_data} 来自 {source_port}")
+        return
+
+    src_id, dst_id, payload = parts
+    print(f"[RECV] {src_id} -> {dst_id} : {payload} (来自 {source_port})")
+
+    # 判断是否发给自己
+    if dst_id == self.my_id:
+        print(f"  >>> 收到发给自己的消息: {payload}")
+        return
+
+    # 查表转发
+    if dst_id in self.routing_table:
+        target_port = self.routing_table[dst_id]
+        if target_port == source_port:
+            Logger.warning(f"  [警告] 目标端口与源端口相同，丢弃")
+            return
+        if target_port in self.listeners:
+            print(f"  >>> 转发至端口 {target_port} (目标: {dst_id})")
+            self.listeners[target_port].send(raw_data)
+        else:
+            Logger.error(f"  [ERROR] 目标端口 {target_port} 未在监听列表")
+    else:
+        Logger.warning(f"  [丢弃] 未知目标ID: {dst_id} (转发表中不存在)")
+\end{verbatim}
+
+\textbf{2. 端口监听线程}
+每个端口对应一个独立的 \texttt{PortListener} 线程，避免阻塞主线程。
+
+\begin{verbatim}
+class PortListener(threading.Thread):
+    def run(self):
+        self.ser = create_serial_connection(self.port, self.baudrate, timeout=0.1)
+        if self.ser:
+            self.running = True
+            Logger.info(f"[{self.port}] 端口已打开，连接设备: {self.user_id}")
+            
+            while self.running:
+                if self.ser.in_waiting:
+                    try:
+                        line = self.ser.readline().decode('utf-8', errors='ignore').strip()
+                        if line:
+                            self.callback(line, self.port)
+                    except Exception as e:
+                        Logger.error(f"[{self.port}] 读取错误: {e}")
+                time.sleep(0.01)
+\end{verbatim}
+
+\textbf{3. 叶子节点帧解析与过滤}
+叶子节点仅显示目的 ID 匹配自身的消息。
+
+\begin{verbatim}
+def _process_frame(self, raw_data):
+    parts = raw_data.split(SEPARATOR, 2)
+    if len(parts) != 3:
+        return
+
+    src_id, dst_id, payload = parts
+
+    if dst_id == self.my_id:
+        print(f"\n[收到消息] 来自 {src_id}: {payload}")
+        print(f"> ", end="", flush=True)
+    elif dst_id == "BROADCAST": # 可选：支持广播
+         print(f"\n[收到广播] 来自 {src_id}: {payload}")
+         print(f"> ", end="", flush=True)
+    else:
+        # 目标不是自己，忽略
+        pass
+\end{verbatim}
 
 \subsubsection{实现效果}
+在由 1 个根节点和 3 个叶子节点（ID2、ID3、ID4）组成的树形拓扑中，实验各项功能均达到预期效果。
+
+\textbf{叶子间通信验证} → ID2 发送消息给 ID3，根节点实时打印转发日志："\texttt{[RECV] ID2 -> ID3 : Hello from ID2 (来自 COM4) >>> 转发至端口 COM5 (目标: ID3)}"，ID3 正确收到并在终端显示消息，验证了基于 ID 的查表转发机制。
+
+\textbf{根节点主动发送} → 根节点输入"ID4 Hello from ROOT"，消息直接转发到连接 ID4 的端口，ID4 收到消息并显示，证明双向链路工作正常。
+
+\textbf{未知目标丢弃} → ID2 发送消息给不存在的 ID5，根节点输出警告日志："\texttt{[丢弃] 未知目标ID: ID5 (转发表中不存在)}"，消息被正确丢弃而不会造成网络混乱。
+
+\textbf{多叶子并发通信} → ID2、ID3、ID4 同时向不同目标发送消息，根节点的多线程监听机制确保了并发转发的正确性，各叶子节点均能收到发往自己的消息而忽略其他消息。
+
+\textbf{转发日志与调试} → 根节点的转发日志清晰记录了每一帧的来源端口、目的 ID 和转发决策，包括转发成功、未知目标丢弃等详细信息，便于调试与问题定位。
+
+\textbf{链路鲁棒性} → 即使在并发转发高峰期，根节点依然能准确转发消息，无错误、无遗漏，各叶子间通过根节点中转完成可靠的双向通信。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{pic/exp3_results.png}
+\caption{实验三实现效果截图}
+\label{fig:exp3_results}
+\end{figure}
 
 \subsubsection{性能分析}
+链路层仅做一次查表与串口写入，耗时主要取决于串口速率。根节点采用多线程监听，每个端口一个独立线程，CPU 占用低，各端口通信互不阻塞。瓶颈在于物理链路数量与波特率，在 9600 bps 下，并发通信时可能出现缓冲区拥塞，可通过提高波特率或优化调度策略改善。
+
+\paragraph{AI 提示词}
+设计树形转发逻辑时的提示词示例：\emph{"编写 Python 串口根节点程序，维护设备 ID 到串口的转发表，收到 SRC|DST|PAYLOAD 格式数据后按目的 ID 查表转发，使用多线程监听多个串口，支持主动发送消息和未知目标丢弃功能。"}

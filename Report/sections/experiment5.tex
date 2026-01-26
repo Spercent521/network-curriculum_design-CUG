@@ -1,27 +1,81 @@
 \section{实验五：多机可靠传输实验（运输层）}
 
 \subsection{功能要求}
-% 简述对应实验的核心目标、需实现的功能点、预期效果
-本实验目标是实现运输层的可靠传输机制。在多链路拓扑的基础上，引入数据校验、停等协议、超时重传及确认机制，确保在模拟出错或超时场景下，数据仍能无差错传输。
+在实验四动态路由的基础上实现端到端可靠传输：
+\begin{itemize}
+  \item 实现停等协议（Stop-and-Wait），提供 SYN/SYN-ACK 建链、数据包确认与超时重传。
+  \item 引入 CRC32 校验检测比特错误，可模拟校验码篡改与丢包，验证鲁棒性。
+  \item 发送端可多次重传直到收到 ACK 或超过最大重试次数，接收端按序交付并处理重复帧。
+\end{itemize}
+预期效果：在故意注入校验错误或丢包场景下，仍能依靠超时重传与 ACK 机制保证消息最终可靠送达或给出失败提示。
 
 \subsection{实现思路}
-% 硬件拓扑、功能流程、协议定义
 \subsubsection{硬件拓扑}
+沿用实验四的多链路网状拓扑，所有节点运行 \texttt{ReliableRouterNode}，重用底层串口与路由设施。拓扑结构与实验四完全相同，仍为 wolf、win、mac、A、B 等节点的网状连接，每个节点配备多个串口与邻居节点建立点对点链路。拓扑示意中可标注一条测试路径用于可靠传输演示，例如 wolf→win→mac，验证跨多跳的端到端可靠传输能力。在这种网状拓扑中，底层的距离向量路由负责找到最优路径并自动适应链路变化，上层的可靠传输协议则负责在端到端之间提供确认、重传与校验机制，两者分工明确、协同工作，共同构建了完整的运输层服务。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\textwidth]{pic/exp6_topology.drawio.png}
+\caption{实验五硬件拓扑示意图}
+\label{fig:exp5_topology}
+\end{figure}
 
 \subsubsection{功能流程}
+可靠传输系统的工作流程在距离向量路由的基础上增加了运输层的会话建立、数据确认、超时重传与校验机制，形成了端到端的可靠通信闭环。
+
+\textbf{路由初始化} → 节点启动时，首先选择多个串口并设置本机 ID，完成路由层的初始化，包括邻居发现、路由表初始化等，同时启动 HELLO 和 DV 的周期性广播任务，确保底层路由持续工作；同时初始化可靠传输层的序号生成器、ACK 事件表与校验错误/丢包注入标志。
+
+\textbf{会话建立}（SYN/SYN-ACK）→ 用户输入 \texttt{send <ID> <Msg>} 发送消息时，发送端进入运输层的可靠发送流程，首先为本次会话随机生成起始序号，构造运输层 SYN 帧（含源端口、目的端口、序号、CRC32 校验、类型标识与载荷），通过网络层查表获取下一跳端口，随后发送 SYN 到下一跳，同时启动超时定时器等待 SYN-ACK 响应。
+
+\textbf{接收方会话确认} → 接收端收到 SYN 帧后，首先校验 CRC32 码，若校验通过则记录会话信息（源、目的、序号），回复 SYN-ACK 确认建链，否则静默丢弃该帧，等待发送端重传。
+
+\textbf{数据帧发送与确认} → 发送端收到 SYN-ACK 后确认会话建立成功，随后封装数据帧（DAT 类型）包含序号递增值与消息负荷，按路由表发送到下一跳，同时启动等待定时器期望接收 ACK。接收端收到数据帧后，再次校验 CRC32，若校验通过且序号正确（无重复）则交付应用层供用户查看，并立即回复 ACK 确认；若校验失败或序号重复则静默丢弃该帧，依靠发送端的超时重传机制。
+
+\textbf{超时重传机制} → 若发送端在预定超时时间内（如 2 秒）未收到期望的 ACK，则重传当前帧，重传次数达到最大上限（如 5 次）后放弃并返回失败，向用户提示发送失败，避免永久阻塞。
+
+\textbf{错误与丢包模拟} → 为验证可靠传输的鲁棒性，程序提供 \texttt{corrupt on/off} 和 \texttt{loss on/off} 命令，分别模拟校验码篡改与丢包场景，\texttt{corrupt on} 时下一次发送的帧的校验码会被故意修改，接收端校验失败后丢弃该帧，发送端超时后自动重传正确的帧；\texttt{loss on} 时下一次发送的帧被直接丢弃而不实际发送，同样触发发送端的超时重传，终端输出明确的重传次数与成功或失败的最终结果。
 
 \subsubsection{协议定义}
+网络层保持 \texttt{DATA|Src|Dst|Payload}，运输层内部帧格式：\texttt{SrcPort|DstPort|Seq|Checksum|Type|Body}，其中 \texttt{Type} $\in$ \{\texttt{SYN}, \texttt{SAK}, \texttt{DAT}, \texttt{ACK}\}。校验使用 CRC32 计算 \texttt{Src|Dst|Seq|Type|Body} 的 32bit 值。
 
 \subsection{模块设计}
-% 模块划分、调用关系、接口定义
 \subsubsection{模块划分}
+\begin{itemize}
+  \item \textbf{路由层}：沿用实验四的邻居管理、距离向量、转发与超时检测。
+  \item \textbf{可靠传输层}：在 \texttt{Code\_Refactored/Experiment5/reliable\_router.py} 中实现序号管理、ACK 事件同步、CRC 计算、超时重传与错误/丢包模拟。
+  \item \textbf{用户接口}：\texttt{send}、\texttt{table}、corrupt on/off、loss on/off、\texttt{exit}。
+\end{itemize}
 
 \subsubsection{接口定义}
+\begin{itemize}
+  \item \texttt{\_initiate\_reliable\_send(target, msg)}：执行停等发送，含 SYN 建链、ACK 等待、超时重传与最大重试控制。
+  \item \texttt{\_transport\_send\_ack(target, seq, is\_syn\_ack)}：发送 ACK/SYN-ACK 响应。
+  \item \texttt{\_on\_recv\_data(src, dst, payload)}：校验、判重、按序交付并回复 ACK；若非目的节点则按路由转发。
+\end{itemize}
 
 \subsection{功能实现}
-% 核心代码、实现效果、性能分析
 \subsubsection{核心代码}
+发送方为每次会话随机生成起始序号，构造 \texttt{SYN} 帧并等待 \texttt{SYN-ACK}；收到正确 ACK 后进入数据帧发送，未在超时内收到期望 ACK 则重传，直至成功或超过最大重试次数。接收方校验失败直接丢弃，校验通过后根据序号与类型决定回 ACK、丢弃重复帧或等待缺失帧。支持一次性模拟校验码错误或丢包以观测重传过程。
 
 \subsubsection{实现效果}
+在网状拓扑环境下，可靠传输协议的各项功能均达到预期效果。
+
+\textbf{正常链路传输} → wolf 节点向 mac 节点发送消息，在无错误无丢包的情况下，单条消息一次发送即成功，SYN 和 SYN-ACK 快速完成会话建立，数据帧发送后立即收到 ACK，终端输出显示重传次数为 0，消息成功到达 mac 节点并被应用层接收，证明了正常情况下高效的端到端传输。
+
+\textbf{CRC32 校验错误恢复} → 启用 \texttt{corrupt on} 后发送消息，首次发送的数据帧的 CRC32 校验码被故意篡改，接收端校验失败后静默丢弃该帧，发送端等待超时（2 秒）后自动重传，第二次发送的帧校验码正确，接收端成功接收并回复 ACK，发送端输出日志显示"重传 1 次成功"，消息最终成功送达，验证了 CRC32 校验与超时重传机制的有效性。
+
+\textbf{丢包检测与恢复} → 启用 \texttt{loss on} 后发送消息，首次发送的数据帧被直接丢弃而不实际发送，发送端等待超时后自动重传，第二次发送的帧正常到达，接收端成功接收并回复 ACK，发送端输出日志显示"重传 1 次成功"，消息最终送达，证明了丢包场景下的恢复能力。
+
+\textbf{多次重传与最大重试限制} → 连续启用多次 \texttt{loss on}，发送端会多次重传直到成功或达到最大重试次数（5 次），若达到最大重试次数则返回失败并提示用户"发送失败：达到最大重试次数"，避免永久阻塞，保证了系统的有界性与稳定性。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{pic/exp5_results.png}
+\caption{实验五实现效果截图}
+\label{fig:exp5_results}
+\end{figure}
 
 \subsubsection{性能分析}
+停等协议吞吐受 RTT 与重传次数影响，适合小规模控制报文。CRC32 计算与事件等待开销极低，主要开销来自可能的多次重传与串口速率。重传上限防止永远阻塞。
+
+\paragraph{AI 提示词} 可靠传输实现时的提示词示例：\emph{“在现有串口 DV 路由器上增加停等可靠传输，设计包含 SYN/SYN-ACK、数据帧、ACK、CRC32 校验、超时重传与错误/丢包模拟的 Python 代码。”}

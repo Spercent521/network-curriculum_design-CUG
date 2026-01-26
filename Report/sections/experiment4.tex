@@ -1,27 +1,303 @@
 \section{实验四：跨链路的多机通信实验（网络层）}
 
 \subsection{功能要求}
-% 简述对应实验的核心目标、需实现的功能点、预期效果
-本实验聚焦网络层路由选择原理。需构建包含2跳以上路径的多链路拓扑（6台设备），实现静态或动态路由算法，支持设备的动态接入与退出，确保任意两台设备间可通过最优路径通信。
+本实验在复杂网状拓扑（Mesh）中，利用距离向量（Distance Vector）路由算法实现多机动态路由通信。核心目标包括：
+\begin{itemize}
+  \item 理解分布式路由网络的基本原理，每台 PC 作为对等的路由器节点。
+  \item 实现邻居自动发现（Hello Protocol）与保持机制。
+  \item 实现基于 Bellman-Ford 方程的距离向量路由算法，支持路由表动态收敛。
+  \item 实现毒性逆转（Poison Reverse）优化，避免路由环路与"计数到无穷"问题。
+  \item 支持链路上下线检测，路由失效后能触发超时检测并毒化路径，避免黑洞。
+  \item 支持数据包跨两跳以上转发，用户可查询路由表并发送消息到任意 ID。
+\end{itemize}
+预期效果：网络自动形成可达路径，路由表在数个周期内收敛；链路断开后，相关目的开销置为不可达（999），并触发路由更新；恢复连接后重新收敛；数据包能够按照最优路径多跳转发。
 
 \subsection{实现思路}
-% 硬件拓扑、功能流程、协议定义
 \subsubsection{硬件拓扑}
+多串口互联形成包含至少一条 2 跳以上路径的网状结构。每台主机作为 \texttt{RouterNode} 同时连接 2 个及以上串口，构成多链路路由环境。实验采用 6 个节点（wolf、win、mac、A、B 及一个备用节点）的网状拓扑，某条路径可能为 \texttt{wolf → win → mac}，另一条路径可能为 \texttt{wolf → A → B → mac}，形成了多跳转发与多路径并存的复杂场景。每个节点需要配备多个 USB 转串口接口卡或多端口串口扩展卡，与邻居节点通过交叉连接建立点对点链路，所有链路波特率保持一致（默认 9600 bps）以简化配置。如图~\ref{fig:exp4_topology}所示，网状拓扑结构中各节点地位对等，不存在中心节点或单点故障风险，任意两节点间可能存在多条路径，距离向量算法需要在这种复杂环境下自动发现邻居、计算最优路径并动态适应链路变化，这为理解分布式路由协议的工作原理提供了直观的实验基础。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\textwidth]{pic/exp6_topology.drawio.png}
+\caption{实验四网状拓扑示意图}
+\label{fig:exp4_topology}
+\end{figure}
 
 \subsubsection{功能流程}
+整个距离向量路由系统的工作流程涵盖节点初始化、邻居发现、路由通告、数据转发、链路故障检测及路由表查询等多个环节，各环节相互配合形成了完整的分布式路由闭环。
+
+\textbf{节点初始化} → 用户启动程序后，首先输入本机 ID（如 RouterA）并多选激活的串口（如 COM3、COM4），程序初始化路由表并将到自身的开销设为 0，为每个激活端口创建独立的监听线程以实现并发接收，同时启动三个定时任务线程。
+
+\textbf{邻居发现}（周期：3 秒）→ 节点向所有激活端口广播 \texttt{HELLO|SenderID} 报文，邻居收到后立即记录发送端口与 ID 的映射关系，将直连邻居的开销置为 1，并更新邻居的最后活跃时间戳为当前时刻，用于后续超时检测。
+
+\textbf{路由通告}（周期：5 秒）→ 节点向所有激活端口广播 \texttt{DV|SenderID|JSON\_Vector} 报文，其中 JSON\_Vector 包含本节点到全网各目的节点的开销信息，邻居收到后依据 Bellman-Ford 方程计算新开销（新开销 = 1 + 邻居声称的到目的开销），若新开销小于当前开销或发现新目的则立即更新路由表。
+
+\textbf{毒性逆转优化} → 在构造每个出端口的 DV 通告时，若某目的的下一跳恰好是该出端口，则向该端口谎报该目的的开销为 999，从根本上避免了路由环路与无穷计数问题；同时检查邻居通告中缺失的目的地，若当前路由经由该邻居到达但邻居未通告，则将该目的开销置为 999 实现隐式毒化。
+
+\textbf{数据转发} → 用户输入 \texttt{send <ID> <Msg>} 后，节点查路由表获取目的地的下一跳端口和下一跳 ID，将消息封装成 \texttt{DATA|Src|Dst|Payload} 格式并发送，中间节点收到数据包后检查目的地，若非自身则按路由表继续转发到下一跳，形成多跳路径；若目的地是自身则交付应用层，用户可在终端看到消息内容。
+
+\textbf{邻居超时检测}（周期：1 秒）→ 检测邻居表中所有邻居的最后活跃时间，若某邻居距当前时刻超过 10 秒未发送 \texttt{HELLO}，则从邻居表中移除该邻居，同时将所有经由该邻居的路由开销置为 999（毒化），触发立即的 DV 更新广播，确保故障链路不会继续被使用。
+
+\textbf{路由表查询} → 用户输入 \texttt{table} 命令后，程序格式化打印当前路由表，显示目标 ID、开销、下一跳 ID 和接口端口，便于观察路由收敛状态、故障恢复过程以及毒化状态（开销 999）。
+
+\textbf{优雅退出} → 用户输入 \texttt{exit} 命令后，程序首先标记运行状态为 false，所有后台任务线程检测到标志后逐个退出，随后主线程逐个关闭所有已打开的串口资源，最终程序优雅终止。
 
 \subsubsection{协议定义}
+定义三类网络层报文格式，字段以竖线分隔，行尾换行分帧：
+\begin{itemize}
+  \item \textbf{邻居发现报文}：\texttt{HELLO|SenderID}
+  \begin{itemize}
+    \item \texttt{HELLO}：报文类型标识
+    \item \texttt{SenderID}：发送方节点 ID
+  \end{itemize}
+  \item \textbf{路由通告报文}：\texttt{DV|SenderID|JSON\_Vector}
+  \begin{itemize}
+    \item \texttt{DV}：报文类型标识
+    \item \texttt{SenderID}：发送方节点 ID
+    \item \texttt{JSON\_Vector}：JSON 格式的距离向量，例如 \texttt{\{"A": \{"cost": 1\}, "B": \{"cost": 2\}\}}
+  \end{itemize}
+  \item \textbf{数据传输报文}：\texttt{DATA|SrcID|DstID|Payload}
+  \begin{itemize}
+    \item \texttt{DATA}：报文类型标识
+    \item \texttt{SrcID}：源节点 ID
+    \item \texttt{DstID}：目的节点 ID
+    \item \texttt{Payload}：消息内容
+  \end{itemize}
+\end{itemize}
+路由表结构：\texttt{dest\_id → \{'cost': int, 'next\_hop\_port': port\_name, 'next\_hop\_id': id\}}
 
 \subsection{模块设计}
-% 模块划分、调用关系、接口定义
 \subsubsection{模块划分}
+程序采用分层模块化设计，主要包含以下模块：
+\begin{itemize}
+  \item \textbf{路由节点核心}（\texttt{Code\_Refactored/Experiment4/router.py}）：
+  \begin{itemize}
+    \item \texttt{RouterNode} 类：维护邻居表、路由表、端口管理、报文处理等核心逻辑。
+    \item 实现 Bellman-Ford 更新算法、毒性逆转、邻居超时检测等机制。
+  \end{itemize}
+  \item \textbf{串口管理模块}：
+  \begin{itemize}
+    \item 为每个端口创建独立的监听线程（\texttt{\_listen\_port}）。
+    \item 使用线程锁（\texttt{port\_locks}）保证并发写入安全。
+  \end{itemize}
+  \item \textbf{定时任务模块}：
+  \begin{itemize}
+    \item \texttt{\_task\_hello}：周期发送 \texttt{HELLO} 报文（每 3 秒）。
+    \item \texttt{\_task\_broadcast\_dv}：周期广播距离向量（每 5 秒）。
+    \item \texttt{\_task\_check\_timeout}：检测邻居超时（每 1 秒）。
+  \end{itemize}
+  \item \textbf{用户交互模块}：
+  \begin{itemize}
+    \item 支持 \texttt{table}、\texttt{send <ID> <Msg>}、\texttt{exit} 等命令。
+  \end{itemize}
+\end{itemize}
+
+\begin{figure}[htbp]
+\centering
+% TODO: 插入模块调用关系图，展示RouterNode核心类管理多个串口监听线程，以及定时任务模块和用户交互模块的调用关系
+\caption{实验四模块调用关系图}
+\end{figure}
 
 \subsubsection{接口定义}
+关键接口定义如下：
+
+\textbf{核心处理接口：}
+\begin{itemize}
+  \item \texttt{\_handle\_packet(raw, port\_source)}：解析报文并分派到 \texttt{HELLO/DV/DATA} 处理函数。
+  \item \texttt{\_on\_recv\_hello(sender\_id, port)}：更新邻居表，将直连邻居开销置为 1。
+  \item \texttt{\_on\_recv\_dv(sender\_id, dv\_json, port)}：解析邻居的距离向量，执行 Bellman-Ford 更新，若路由表变化则触发 DV 更新。
+  \item \texttt{\_on\_recv\_data(src\_id, dst\_id, payload)}：若目的为本机则交付应用层，否则按路由表转发。
+\end{itemize}
+
+\textbf{路由更新接口：}
+\begin{itemize}
+  \item \texttt{\_send\_dv\_updates()}：为每个端口定制距离向量并广播，支持毒性逆转逻辑（若下一跳是该端口，则开销设为 999）。
+\end{itemize}
+
+\textbf{数据发送接口：}
+\begin{itemize}
+  \item \texttt{\_initiate\_send(target, msg)}：查表获取下一跳端口，封装数据包并发送。
+  \item \texttt{\_send\_to\_port(port\_name, packet\_str)}：线程安全地发送数据到指定端口。
+\end{itemize}
+
+\textbf{用户命令接口：}
+\begin{itemize}
+  \item \texttt{\_print\_table()}：打印当前路由表，格式化显示目标、开销、下一跳 ID 和接口。
+  \item \texttt{\_input\_loop()}：主循环，处理用户输入命令。
+\end{itemize}
 
 \subsection{功能实现}
-% 核心代码、实现效果、性能分析
 \subsubsection{核心代码}
+程序的核心实现要点如下：
+
+\textbf{1. Bellman-Ford 路由更新算法}
+收到邻居的距离向量后，依据 Bellman-Ford 方程更新路由表：
+\begin{itemize}
+  \item 新开销 = 1（到邻居的开销）+ 邻居到目标的开销
+  \item 若新开销小于当前开销，或发现新目标，则更新路由表
+  \item 若当前路由的下一跳是该邻居，且邻居通告中未包含该目标，则将该目标开销置为 999（隐式毒化）
+\end{itemize}
+
+\begin{verbatim}
+def _on_recv_dv(self, sender_id, dv_json, port):
+    try:
+        neighbor_dv = json.loads(dv_json)
+    except:
+        return
+
+    with self.rt_lock:
+        updated = False
+        
+        # 1. 遍历邻居通告的所有目的地
+        for dest, info in neighbor_dv.items():
+            if dest == self.my_id: continue
+            
+            cost_neighbor_to_dest = info.get('cost', 999)
+            new_cost = 1 + cost_neighbor_to_dest
+            if new_cost > 999: new_cost = 999
+            
+            current_route = self.routing_table.get(dest)
+            
+            # 情况A: 发现新目标
+            if not current_route:
+                if new_cost < 999:
+                    self.routing_table[dest] = {
+                        'cost': new_cost,
+                        'next_hop_port': port,
+                        'next_hop_id': sender_id
+                    }
+                    updated = True
+            
+            # 情况B: 现有路由的下一跳就是该邻居
+            elif current_route['next_hop_id'] == sender_id:
+                if current_route['cost'] != new_cost:
+                    current_route['cost'] = new_cost
+                    updated = True
+            
+            # 情况C: 现有路由下一跳不是这个邻居，但提供了更短路径
+            elif new_cost < current_route['cost']:
+                self.routing_table[dest] = {
+                    'cost': new_cost,
+                    'next_hop_port': port,
+                    'next_hop_id': sender_id
+                }
+                updated = True
+
+        # 2. 检查是否有路由需要毒化
+        for dest in list(self.routing_table.keys()):
+            if dest == self.my_id: continue
+            route = self.routing_table[dest]
+            if route['next_hop_id'] == sender_id:
+                if dest not in neighbor_dv:
+                    if route['cost'] != 999:
+                        route['cost'] = 999
+                        updated = True
+
+    if updated:
+        self._send_dv_updates()
+\end{verbatim}
+
+\textbf{2. 毒性逆转（Poison Reverse）}
+向邻居通告路由时，若某目的的下一跳是该邻居，则谎报开销为 999，避免路由环路。
+
+\begin{verbatim}
+def _send_dv_updates(self):
+    with self.rt_lock:
+        snapshot = {k:v.copy() for k,v in self.routing_table.items()}
+    
+    current_ports = list(self.active_ports.keys())
+    
+    for port_out in current_ports:
+        neighbor_id = None
+        with self.neighbors_lock:
+            if port_out in self.neighbors:
+                neighbor_id = self.neighbors[port_out]['id']
+        
+        # 构建针对该端口的DV
+        custom_dv = {}
+        for dest, info in snapshot.items():
+            cost = info['cost']
+            
+            # 毒性逆转逻辑
+            if info.get('next_hop_port') == port_out:
+                cost = 999 
+            
+            custom_dv[dest] = {'cost': cost}
+        
+        dv_str = json.dumps(custom_dv)
+        packet = f"{TYPE_DV}{SEPARATOR}{self.my_id}{SEPARATOR}{dv_str}"
+        self._send_to_port(port_out, packet)
+\end{verbatim}
+
+\textbf{3. 邻居超时检测}
+每秒检测邻居状态，若 10 秒内未收到 \texttt{HELLO}，则移除邻居并毒化相关路由。
+
+\begin{verbatim}
+def _task_check_timeout(self):
+    while self.running:
+        now = time.time()
+        timeout_ports = []
+        
+        with self.neighbors_lock:
+            for port, info in self.neighbors.items():
+                if now - info['last_seen'] > NEIGHBOR_TIMEOUT:
+                    Logger.warning(f"[连接断开] 邻居 {info['id']} ({port}) 超时")
+                    timeout_ports.append(port)
+            for p in timeout_ports:
+                del self.neighbors[p]
+        
+        if timeout_ports:
+            with self.rt_lock:
+                for dest, info in self.routing_table.items():
+                    if info['next_hop_port'] in timeout_ports and dest != self.my_id:
+                        info['cost'] = 999
+        
+        time.sleep(1)
+\end{verbatim}
+
+\textbf{4. 数据包转发}
+收到数据包后，若目的为本机则交付，否则查表转发到下一跳端口。
+
+\begin{verbatim}
+def _on_recv_data(self, src_id, dst_id, payload):
+    if dst_id == self.my_id:
+        Logger.info(f">>> 收到消息 [{src_id}]: {payload}")
+        print("> ", end="", flush=True)
+        return
+    
+    with self.rt_lock:
+        route = self.routing_table.get(dst_id)
+        if route and route['cost'] < 999:
+            next_port = route['next_hop_port']
+            packet = f"{TYPE_DATA}{SEPARATOR}{src_id}{SEPARATOR}{dst_id}{SEPARATOR}{payload}"
+            Logger.info(f"[转发] {src_id}->{dst_id} via {next_port}")
+            self._send_to_port(next_port, packet)
+        else:
+            Logger.warning(f"[丢弃] 目标不可达: {dst_id} (From {src_id})")
+\end{verbatim}
 
 \subsubsection{实现效果}
+在 6 节点网状拓扑中，实验各项功能均达到预期效果。
+
+\textbf{路由收敛} → 所有节点启动后约 5-10 秒内路由表收敛完成，\texttt{table} 命令显示到全网各节点的最短开销及下一跳信息，例如 wolf 节点到 mac 节点的开销为 2，下一跳为 win，验证了 Bellman-Ford 算法的正确性和路由表学习机制的有效性。
+
+\textbf{数据多跳转发} → 用户在 wolf 节点输入 \texttt{send mac Hello from wolf}，消息经最优路径（wolf→win→mac）多跳转发到达目标节点，中间节点 win 输出转发日志（\texttt{[转发] wolf->mac via COM5}），mac 节点收到消息并在终端显示，证明了多跳转发机制的有效性。
+
+\textbf{链路故障检测} → 拔掉 wolf 与 win 之间的串口线后，wolf 节点检测到 win 邻居超时（10 秒内未收到 HELLO），输出警告日志（\texttt{[连接断开] 邻居 win (COM3) 超时}），同时将所有经由 win 的路由开销置为 999，例如到 mac 的开销从 2 变为 999，此时发送消息给 mac 会被安全丢弃并告警（\texttt{[丢弃] 目标不可达: mac}）。
+
+\textbf{链路恢复自愈} → 重新连接 wolf 与 win 的串口线后，双方重新发送 HELLO 建立邻居关系，随后交换 DV 报文并相互更新路由表，路由表重新收敛，wolf 到 mac 的开销恢复为 2，消息能够正常转发，验证了路由协议的自愈能力和动态适应链路变化的能力。
+
+\textbf{毒性逆转验证} → 通过日志观察 DV 通告内容，发现若某目的的下一跳是接收端口，则通告中该目的的开销显示为 999；例如 win 向 wolf 通告时，到 mac 的开销为实际开销 1，但向 mac 通告时，到 mac 的开销被毒化为 999，防止 mac 误以为可以通过 win 到达 mac 自身，有效避免了路由环路。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{pic/exp4_results.png}
+\caption{实验四实现效果截图}
+\label{fig:exp4_results}
+\end{figure}
 
 \subsubsection{性能分析}
+距离向量广播周期分别为 3 秒（\texttt{HELLO}）与 5 秒（\texttt{DV}），路由表更新复杂度随目的数量线性增长，对小规模拓扑（6-10 节点）开销可忽略。串口 IO 采用行读取并加写锁，避免并发写冲突。邻居超时检测每秒执行一次，及时发现链路故障。毒性逆转有效避免了路由环路，但增加了通告开销。在 9600 bps 波特率下，路由收敛时间约 5-10 秒；提升至 115200 bps 可显著缩短收敛时间。
+
+\paragraph{AI 提示词}
+路由协议草拟阶段使用的提示词示例：\emph{"实现一个基于串口的距离向量路由器，支持 HELLO 邻居发现（每3秒）、DV 广播（每5秒）、Bellman-Ford 更新、毒性逆转、邻居超时检测（10秒），并提供 send/table 命令，使用多线程监听多个串口。"}

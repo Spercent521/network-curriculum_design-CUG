@@ -1,27 +1,181 @@
 \section{实验二：双机通信实验（C/S模式）}
 
 \subsection{功能要求}
-% 简述对应实验的核心目标、需实现的功能点、预期效果
-本实验要求掌握双机串口通信的交叉连接方法，理解并实现C/S（客户端/服务器）模式的通信逻辑。预期实现客户端发起请求，服务器端接收并处理请求后返回响应，且双方均能正确显示交互数据。
+本实验在实验一的基础上，扩展为两台设备的交叉串口通信链路，实现典型的客户端/服务器（C/S）交互模式。核心目标包括：
+\begin{itemize}
+  \item 掌握双机串口通信的交叉连接方法，理解 TX/RX 交叉接线与共地的重要性。
+  \item 构建服务器端程序，实现常驻监听、命令解析与响应返回功能。
+  \item 构建客户端程序，实现主动连接、命令发送与响应接收功能。
+  \item 实现基础命令集：\texttt{HELLO} 握手、\texttt{TIME} 查询服务器时钟、\texttt{ECHO <msg>} 消息回显、\texttt{CALC <expr>} 远程计算表达式、\texttt{QUIT} 结束会话。
+  \item 收发双方在终端显示交互内容，并能通过调试模式查看原始报文的十六进制表示，便于问题排查。
+\end{itemize}
+预期效果：客户端发送的命令能够被服务器准确解析并返回正确结果；关闭命令能够使双方有序退出；整个过程无乱码、无阻塞。
 
 \subsection{实现思路}
-% 硬件拓扑、功能流程、协议定义
 \subsubsection{硬件拓扑}
+两台主机通过 USB 转串口模块实现交叉连接，形成点对点双向通信链路。具体连接方式为：计算机 A 的 TX（发送）引脚连接到计算机 B 的 RX（接收）引脚，计算机 B 的 TX（发送）引脚连接到计算机 A 的 RX（接收）引脚，同时两台计算机的 GND（地线）引脚相连以确保共地，避免电平不匹配导致的通信异常。双方串口参数必须保持严格一致，默认配置为 9600 bps、8N1 格式，但程序支持通过交互式菜单调整波特率、数据位、停止位、校验位等参数，以适应不同的硬件环境与传输需求。如图~\ref{fig:exp2_topology}所示，交叉连接的拓扑结构简单直观，既避免了单机回环的局限性，又为后续多机组网实验奠定了基础，是理解双向串口通信的关键环节。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.7\textwidth]{pic/exp2_topology.drawio.png}
+\caption{实验二硬件拓扑示意图}
+\label{fig:exp2_topology}
+\end{figure}
 
 \subsubsection{功能流程}
+客户端与服务器的交互流程遵循典型的请求-响应模式。整个过程可以描述为以下阶段的有序展开：
+
+\textbf{服务器启动与监听} → 服务器程序启动后，交互式选择串口、设置波特率与格式参数 → 打开串口连接 → 启动后台监听线程进入被动监听状态，持续读取串口数据以捕获客户端请求。
+
+\textbf{客户端启动与连接} → 客户端选择串口并设置与服务器一致的波特率与格式 → 打开串口 → 自动启动后台接收线程 → 立即发送初始 \texttt{HELLO} 命令建立连接并确认服务器就绪。
+
+\textbf{命令交互阶段} → 客户端在命令行输入命令（如 \texttt{TIME}、\texttt{ECHO Hello}） → 程序通过串口发送该命令 → 服务器接收线程按行读取数据后调用命令处理函数 → 根据命令类型解析参数并生成对应响应字符串 → 服务器将响应发送回客户端。
+
+\textbf{响应接收与显示} → 客户端后台接收线程读取服务器响应 → 立即在终端显示给用户，实现实时交互效果。支持的命令包括 \texttt{TIME}（查询时间）、\texttt{ECHO}（消息回显）、\texttt{CALC}（远程计算）等，每条命令都获得对应的响应。
+
+\textbf{退出流程} → 客户端发送 \texttt{QUIT} 命令 → 服务器返回告别信息并结束监听循环 → 双方同时关闭串口 → 所有线程终止，程序优雅退出。
+
+整个交互过程中，客户端和服务器分工明确：客户端负责用户输入与响应展示，服务器负责命令解析与数据处理，通过串口作为物理传输媒介实现端到端的应用层通信。
 
 \subsubsection{协议定义}
+采用基于文本行的简单应用层协议：
+\begin{itemize}
+  \item \textbf{编码格式}：UTF-8 编码，支持中文和英文字符。
+  \item \textbf{分帧方式}：以换行符（\texttt{\textbackslash n}）作为请求和响应的分帧边界，有效避免粘包和半包问题。
+  \item \textbf{请求格式}：\texttt{<COMMAND> [参数]}，命令关键字不区分大小写。支持的命令包括：
+  \begin{itemize}
+    \item \texttt{HELLO}：建立连接问候，无参数
+    \item \texttt{TIME}：查询服务器当前时间，无参数
+    \item \texttt{ECHO <msg>}：回显消息，参数为任意文本
+    \item \texttt{CALC <expr>}：计算表达式，参数为 Python 合法表达式（如 \texttt{2+3*4}）
+    \item \texttt{QUIT}：断开连接并退出，无参数
+  \end{itemize}
+  \item \textbf{响应格式}：统一以 \texttt{SERVER: <响应内容>} 开头，便于客户端识别和解析。
+  \item \textbf{调试模式}：双方均支持十六进制调试输出，显示原始报文的十六进制表示，便于查错。
+\end{itemize}
 
 \subsection{模块设计}
-% 模块划分、调用关系、接口定义
 \subsubsection{模块划分}
+程序采用 C/S 架构，主要包含三个模块：
+\begin{itemize}
+  \item \textbf{串口工具层}（\texttt{Code\_Refactored/utils.py}）：复用实验一的串口工具，提供端口扫描、串口创建、格式选择（\texttt{choose\_serial\_format}）等通用功能。
+  \item \textbf{服务器端}（\texttt{Code\_Refactored/Experiment2/server.py}）：定义 \texttt{SerialServer} 类，持有串口对象、接收线程、运行状态标志。核心方法包括命令解析（\texttt{process\_request}）和响应发送。
+  \item \textbf{客户端}（\texttt{Code\_Refactored/Experiment2/client.py}）：定义 \texttt{SerialClient} 类，负责命令输入、请求封装发送、接收显示。内置帮助系统，支持用户查询可用命令。
+\end{itemize}
+
+\begin{figure}[htbp]
+\centering
+% TODO: 插入模块调用关系图，展示客户端和服务器分别调用utils层，以及各自内部的方法调用关系
+\caption{实验二模块调用关系图}
+\end{figure}
 
 \subsubsection{接口定义}
+关键接口定义如下：
+
+\textbf{服务器端接口（SerialServer 类）：}
+\begin{itemize}
+  \item \texttt{open\_port(port, baudrate, bytesize, stopbits, parity)}：依据用户选择的串口格式打开串口。
+  \item \texttt{close\_port()}：停止接收线程，关闭串口，释放资源。
+  \item \texttt{start\_server()}：启动监听线程，进入服务状态。
+  \item \texttt{process\_request(request)}：解析请求字符串，根据命令类型返回响应字符串及退出标志。支持 \texttt{HELLO}、\texttt{TIME}、\texttt{ECHO}、\texttt{CALC}、\texttt{QUIT} 命令。
+  \item \texttt{receive\_worker()}：后台接收线程的工作函数，按行读取串口数据，调用 \texttt{process\_request} 处理并发送响应。
+\end{itemize}
+
+\textbf{客户端接口（SerialClient 类）：}
+\begin{itemize}
+  \item \texttt{open\_port(port, baudrate, bytesize, stopbits, parity)}：打开串口，自动启动接收线程。
+  \item \texttt{close\_port()}：停止接收线程，关闭串口。
+  \item \texttt{send\_request(request)}：发送请求到服务器，自动补全行尾换行符，确保服务器能够按行读取。
+  \item \texttt{\_receive\_worker()}：后台接收线程的工作函数，读取服务器响应并显示在终端。
+\end{itemize}
+
+\textbf{工具层接口（utils.py）：}
+\begin{itemize}
+  \item \texttt{select\_serial\_port(prompt)}：扫描可用串口，以数字菜单形式供用户选择。
+  \item \texttt{create\_serial\_connection(port, baudrate, ...)}：创建并打开串口连接。
+  \item \texttt{choose\_serial\_format()}：交互式选择串口格式（数据位、停止位、校验位），返回格式参数和标签。
+\end{itemize}
 
 \subsection{功能实现}
-% 核心代码、实现效果、性能分析
 \subsubsection{核心代码}
+程序的核心实现要点如下：
+
+\textbf{1. 服务器端命令解析}
+\texttt{process\_request} 方法使用字符串匹配解析命令，根据不同命令类型返回相应响应。\texttt{CALC} 命令使用 Python 内置 \texttt{eval} 函数计算表达式，异常时返回错误提示。
+
+\begin{verbatim}
+def process_request(self, request):
+    request_str = request.decode('utf-8', errors='ignore').strip()
+    
+    if request_str.upper().startswith("HELLO"):
+        response = "SERVER: Hello, Client! Connection established."
+    elif request_str.upper().startswith("TIME"):
+        response = f"SERVER: Current time is {time.strftime('%Y-%m-%d %H:%M:%S')}"
+    elif request_str.upper().startswith("ECHO"):
+        echo_content = request_str[5:].strip()
+        response = f"SERVER: ECHO - {echo_content}"
+    elif request_str.upper().startswith("CALC"):
+        try:
+            expr = request_str[5:].strip()
+            result = eval(expr)
+            response = f"SERVER: CALC - {expr} = {result}"
+        except:
+            response = "SERVER: ERROR - Invalid calculation expression"
+    elif request_str.upper().startswith("QUIT"):
+        response = "SERVER: Goodbye!"
+        return response, True  # 返回退出标志
+    else:
+        response = f"SERVER: Unknown command '{request_str}'"
+    
+    return response, False
+\end{verbatim}
+
+\textbf{2. 客户端自动连接}
+客户端在启动后自动发送 \texttt{HELLO} 命令建立连接，验证服务器就绪。
+
+\begin{verbatim}
+Logger.info("正在连接服务器...")
+time.sleep(0.5)  # 等待服务器就绪
+client.send_request("HELLO")
+\end{verbatim}
+
+\textbf{3. 调试输出}
+双方均提供十六进制调试输出功能，便于查错。调试输出包含时间戳、方向、长度、原始内容和十六进制表示。
+
+\begin{verbatim}
+def _log(self, direction, payload):
+    ts = time.strftime('%H:%M:%S')
+    if not isinstance(payload, bytes):
+        payload = str(payload).encode('utf-8', errors='ignore')
+    raw = repr(payload)
+    hex_str = ' '.join(f"{b:02X}" for b in payload)
+    print(f"[DEBUG {ts}] {direction}: len={len(payload)} raw={raw} hex={hex_str}")
+\end{verbatim}
 
 \subsubsection{实现效果}
+在 9600 bps 波特率下，C/S 交互各项功能均运行稳定且响应及时。具体实现结果如下：
+
+\textbf{连接建立验证} → 客户端启动后自动发送 \texttt{HELLO}，服务器立即返回"SERVER: Hello, Client! Connection established."，连接建立成功并输出日志提示。
+
+\textbf{时间查询功能} → 客户端发送 \texttt{TIME} 命令，服务器实时调用系统时间函数并返回格式化的当前时间（如"SERVER: Current time is 2026-01-25 09:30:45"），验证了服务器端的动态数据获取能力。
+
+\textbf{消息回显测试} → 客户端发送 \texttt{ECHO Hello World}，服务器解析参数并返回"SERVER: ECHO - Hello World"，验证了参数解析与内容透传的正确性。
+
+\textbf{远程计算功能} → 客户端发送 \texttt{CALC 2+3*4}，服务器调用 \texttt{eval} 函数计算表达式并返回"SERVER: CALC - 2+3*4 = 14"，展示了应用层协议的可扩展性与动态计算能力。
+
+\textbf{优雅退出流程} → 客户端发送 \texttt{QUIT}，服务器返回"SERVER: Goodbye!"并退出监听循环，双方同时关闭串口，整个过程无阻塞、无异常。
+
+\textbf{性能与波特率} → 在 9600 bps 下，每条命令的端到端延迟约 50-100ms（取决于串口缓冲区与系统调度），若升级至 115200 bps，响应速度显著加快，延迟可缩短至 5-10ms 以内，端到端延迟可忽略不计。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{pic/exp2_results.png}
+\caption{实验二实现效果截图}
+\label{fig:exp2_results}
+\end{figure}
 
 \subsubsection{性能分析}
+通信量小、协议简单，单线程轮询读取即可满足需求。行分隔符有效解决了粘包问题，唯一瓶颈为串口物理速率，对本实验不构成限制。在 9600 bps 下，端到端延迟可忽略不计；若提升至 115200 bps，响应速度显著加快。调试输出在查错时启用，正常使用时可关闭以减少日志开销。
+
+\paragraph{AI 提示词}
+生成 C/S 串口交互样例时的提示词示例：\emph{"用 Python 编写一个串口客户端和服务器程序，采用文本行协议，支持 HELLO/TIME/ECHO/CALC/QUIT 命令，带调试日志（十六进制输出）和交互式串口参数配置，实现优雅退出机制。"}

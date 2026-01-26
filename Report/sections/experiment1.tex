@@ -1,31 +1,139 @@
 \section{实验一：单机串口通信}
 
 \subsection{功能要求}
-% 简述对应实验的核心目标、需实现的功能点、预期效果
-本实验旨在理解串口通信物理层原理，掌握USB转串口接口卡的连接方法，并实现基础的串口打开、关闭及数据的自收发功能。预期能够通过串口调试助手或自编程序，验证单机状态下的串口回路通信正常。
+本实验聚焦串口物理层与最小可用通信链路的搭建，是整个协议栈实现的基础。核心目标包括：
+\begin{itemize}
+  \item 掌握 USB 转串口接口卡的连接方法，完成 TX 与 RX 引脚的短接（回环），理解波特率、数据位、校验位、停止位等串口参数的配置与作用。
+  \item 编写串口助手程序，支持端口自动扫描、串口打开/关闭、数据收发显示，验证单机回环通信的正确性。
+  \item 进行性能与鲁棒性验证：通过最大发送速率测试评估串口吞吐能力，通过长消息测试观察分包/粘包现象及缓冲区溢出导致的丢包情况。
+\end{itemize}
+预期效果：在回环模式下，发送的数据能够完全正确地被接收端接收；速率测试能够给出准确的吞吐量统计；长消息测试能够在接收进度提示下完整收齐数据或准确提示丢失字节数。
 
 \subsection{实现思路}
-% 硬件拓扑、功能流程、协议定义
 \subsubsection{硬件拓扑}
-% 绘制清晰的设备连接图（标注设备ID、COM口编号、链路类型）
+单机配置一套 USB 转串口接口卡（如 CP2102、FT232 等），通过杜邦线将模块的 TX（发送）引脚与 RX（接收）引脚短接，形成回环链路。无需额外的中继设备或第二台计算机，仅需要一根串口线即可完成自环测试。默认串口参数配置为 9600 bps、8 数据位、无校验位（N）、1 停止位（8N1），但程序支持通过交互式菜单调整波特率和其他格式参数。如图~\ref{fig:exp1_topology}所示，USB-TTL 模块直接与计算机相连，TX 与 RX 引脚通过杜邦线短接形成物理回环，发送的数据立即被自身接收，这种配置既简单又能够有效验证串口驱动与数据收发的正确性。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.4\textwidth]{pic/exp1_topology.drawio.png}
+\caption{实验一硬件拓扑示意图}
+\label{fig:exp1_topology}
+\end{figure}
 
 \subsubsection{功能流程}
-% 使用流程图描述核心逻辑
+整个串口通信测试程序的工作流程贯穿从初始化到退出的完整生命周期。程序的执行过程可以描述为以下阶段的有序组合：
+
+\textbf{端口选择阶段} → 程序启动后自动扫描系统可用串口，通过数字菜单呈现给用户，用户选择目标端口。
+
+\textbf{串口配置阶段} → 根据用户输入设置波特率（如 9600 或 115200 bps）、数据位（8）、停止位（1）、校验位（无），这些参数将直接影响后续数据的传输质量与速率。
+
+\textbf{串口打开与初始化} → 程序根据配置参数打开选定的串口连接，同时自动启动后台接收线程，该线程以非阻塞轮询方式（每 10ms 查询一次）持续监听串口数据。
+
+\textbf{基础收发测试} → 用户在命令行输入文本 → 程序通过串口发送该数据 → 数据由于 TX/RX 短接而立即回环 → 后台接收线程读取回环数据 → 终端实时显示收到的内容，验证物理链路的通畅性。
+
+\textbf{速率测试模式} → 进入速率测试后，程序在 5 秒内持续发送 1KB 大小的数据片段 → 同时累计记录发送字节数和接收字节数 → 测试结束后计算平均吞吐量（发送字节数 ÷ 耗时，单位 KB/s） → 若接收字节数明显少于发送字节数，则提示可能存在缓冲区溢出导致的丢包。
+
+\textbf{长消息测试模式} → 程序生成包含可识别头尾标记（如"START"和"END"）的 10KB 文本数据 → 一次性发送整个数据块到串口 → 接收线程按累计接收字节数实时显示进度百分比（0% → 50% → 100%） → 测试完成后校验是否完整接收所有数据 → 若数据丢失则提示缺失的字节数。
+
+\textbf{资源清理阶段} → 用户输入退出命令后，程序停止后台接收线程 → 关闭串口连接 → 释放所有资源 → 程序优雅退出，确保系统状态干净无残留。
+
+整个流程形成了从初始化、功能测试、到最后资源回收的完整闭环，各阶段职责清晰、衔接紧密，充分展现了串口通信程序从启动到终止的完整生命周期。
 
 \subsubsection{协议定义}
-% 明确数据帧格式、交互规则（单机实验主要涉及物理层配置）
+本实验主要验证物理层和数据链路层的稳定性，采用简单的文本帧协议：
+\begin{itemize}
+  \item \textbf{编码格式}：默认 UTF-8 编码，支持中文和英文字符。
+  \item \textbf{分帧方式}：以换行符（\texttt{\textbackslash n}）作为帧边界，便于测试分包和粘包现象。
+  \item \textbf{物理层配置}：8N1 格式（8 数据位、无校验、1 停止位），波特率默认 9600 bps，可交互调整为 115200 bps 等高速率。
+  \item \textbf{校验机制}：本实验不添加额外的校验字段，主要依赖串口硬件的物理层校验（如奇偶校验）和回环自验证。后续实验将引入 CRC32 等更强的校验机制。
+\end{itemize}
 
 \subsection{模块设计}
-% 模块划分、调用关系、接口定义
 \subsubsection{模块划分}
+程序采用分层设计思想，将底层串口操作与业务逻辑解耦，主要包含串口工具层与业务逻辑层两个核心模块。串口工具层（\texttt{Code\_Refactored/utils.py}）负责底层串口操作，包括端口扫描、交互式选择、串口连接创建、格式参数配置等通用功能，该模块还提供统一的日志输出接口（\texttt{Logger}），支持不同级别的日志（INFO、SUCCESS、WARNING、ERROR），便于调试与问题定位。业务逻辑层（\texttt{Code\_Refactored/Experiment1/main.py}）定义 \texttt{SerialAssistant} 类，封装串口句柄管理与具体业务逻辑，包括基础收发、速率测试、长消息测试等功能，内部维护接收线程、统计数据（接收字节数）和测试模式标志等状态信息。这种分层设计使得串口工具层可以被后续实验复用，业务逻辑层则专注于实验一的功能需求，降低了模块间的耦合度，提高了代码的可维护性与可扩展性。
 
 \subsubsection{接口定义}
+关键接口定义如下：
+\begin{itemize}
+  \item \texttt{open\_port(port, baudrate, timeout)}：打开指定串口，配置波特率与超时参数，并自动启动后台接收线程。返回布尔值表示成功与否。
+  \item \texttt{close\_port()}：停止接收线程，关闭串口连接，释放资源。
+  \item \texttt{send\_data(data)}：将数据写入串口缓冲区。支持字节串或字符串输入，字符串会自动进行 UTF-8 编码。发送成功后打印发送字节数。
+  \item \texttt{\_receive\_worker()}：后台接收线程的工作函数，采用非阻塞查询方式（\texttt{in\_waiting}），持续读取串口缓冲区数据。根据 \texttt{test\_mode} 标志决定是否打印接收内容或仅统计字节数。
+  \item \texttt{run\_basic\_mode(assistant)}：基础收发模式，提供交互式命令行界面，用户输入文本后立即发送并显示回环结果。
+  \item \texttt{run\_rate\_test(assistant)}：速率测试模式，持续 5 秒发送 1KB 数据片段，统计发送与接收字节数，计算吞吐量（KB/s）。
+  \item \texttt{run\_long\_message\_test(assistant)}：长消息测试模式，生成 10KB 文本并一次性发送，监控接收进度，最终校验完整性。
+\end{itemize}
 
 \subsection{功能实现}
-% 核心代码、实现效果、性能分析
 \subsubsection{核心代码}
+程序的核心实现要点如下：
+
+\textbf{1. 串口管理与接收线程}
+\texttt{SerialAssistant} 类在 \texttt{open\_port} 成功后立即创建并启动接收线程，采用守护线程（\texttt{daemon=True}）确保主程序退出时线程自动终止。接收线程内部使用 \texttt{ser.in\_waiting} 非阻塞查询，每 10ms 轮询一次，避免 CPU 占用过高。
+
+\begin{verbatim}
+def _receive_worker(self):
+    while self.receiving and self.ser and self.ser.is_open:
+        try:
+            if self.ser.in_waiting > 0:
+                data = self.ser.read(self.ser.in_waiting)
+                self.bytes_received += len(data)
+                if not self.test_mode:
+                    decoded = data.decode('utf-8')
+                    print(f"\r[接收] {decoded}")
+                    sys.stdout.flush()
+            time.sleep(0.01)
+        except Exception as e:
+            if self.receiving:
+                Logger.error(f"接收出错: {e}")
+\end{verbatim}
+
+\textbf{2. 速率测试实现}
+速率测试通过持续发送 1KB 数据片段并在 5 秒后停止，计算总发送字节数除以耗时得到吞吐量。测试期间启用 \texttt{test\_mode} 标志，抑制打印输出以确保吞吐测试的准确性。
+
+\begin{verbatim}
+def run_rate_test(assistant):
+    payload = b'X' * 1024  # 1KB packets
+    sent_bytes = 0
+    start_time = time.time()
+    while time.time() - start_time < 5:
+        if assistant.send_data(payload):
+            sent_bytes += len(payload)
+    duration = time.time() - start_time
+    print(f"速率: {sent_bytes / duration / 1024:.2f} KB/s")
+\end{verbatim}
+
+\textbf{3. 长消息测试实现}
+长消息测试生成包含可识别标记（\texttt{START} 和 \texttt{END}）的长文本，通过累计接收字节数实时显示进度。测试完成后对比发送和接收字节数，若不一致则提示丢失字节数。
+
+\begin{verbatim}
+long_msg = "START" + "1234567890" * (length // 10) + "END"
+while assistant.bytes_received < len(long_msg) and timeout > 0:
+    time.sleep(0.5)
+    progress = (assistant.bytes_received / len(long_msg)) * 100
+    print(f"  进度: {assistant.bytes_received}/{len(long_msg)} ({progress:.1f}%)")
+\end{verbatim}
 
 \subsubsection{实现效果}
-% 附实验测试截图
+在默认 9600 bps 波特率下，实验各项功能均达到预期效果。具体实现结果如下：
+
+\textbf{回环收发验证} → 在终端输入"Hello World"后，接收区立即显示相同内容，往返延迟在毫秒级，验证了物理链路与驱动程序的正确性。
+
+\textbf{速率测试结果} → 9600 bps 波特率下，5 秒内发送约 6000 字节数据，接收字节数与发送字节数基本相等（偏差在 1\% 以内），表明串口缓冲区管理有效且无丢包。若升级至 115200 bps，吞吐量提升 12 倍左右，达到 10-11 KB/s。
+
+\textbf{长消息接收进度} → 接收线程实时显示进度百分比：0% → 25% → 50% → 75% → 100%，最终校验 START/END 标记完整，确认所有 10KB 数据正确接收。
+
+\textbf{并发处理能力} → 后台接收线程与主线程并行工作，用户可在接收过程中继续输入新的发送请求，充分展示了异步编程的优势。长消息在高速率下（115200 bps）传输速度显著加快，进度条更新更为流畅，最终传输吞吐量相应提升至约 10-11 KB/s，证明了波特率配置对传输效率的重要影响。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{pic/exp1_results.png}
+\caption{实验一实现效果截图}
+\label{fig:exp1_results}
+\end{figure}
 
 \subsubsection{性能分析}
+在 9600 bps 下，单线程轮询即可满足实验要求。接收线程每 10ms 休眠，CPU 占用率低于 1\%。未使用硬件流控（RTS/CTS），长消息在高速率下可能触发串口缓冲区拥塞，通过进度显示和丢包提示辅助分析。建议在实际应用中根据需求选择适当的波特率和流控机制。
+
+\paragraph{AI 提示词}
+生成串口助手框架时使用的提示词示例：\emph{"用 Python 编写一个串口回环测试工具，包含端口扫描与选择、接收线程、速率统计和长消息分包/粘包测试，接口清晰，输出友好，支持调整波特率和串口格式参数。"}

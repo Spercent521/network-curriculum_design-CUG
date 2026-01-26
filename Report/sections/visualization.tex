@@ -1,0 +1,30 @@
+\section{可视化与远程管理}
+
+\subsection{系统架构}
+可视化方案由三部分组成：
+\begin{itemize}
+  \item \textbf{前端}：基于 React 与 Vite 构建的 Web 界面，提供网络拓扑、路由表与日志的可视化展示，并内置命令终端用于触发 \texttt{ping}、\texttt{tracert}、\texttt{send}、\texttt{table} 等操作。
+  \item \textbf{后端}：FastAPI 服务负责汇聚节点上报的数据、存储最近的邻居表与路由表快照，并将前端输入的远程命令转发给指定节点执行。
+  \item \textbf{节点侧适配}：在 \texttt{NetworkNode} 基础上增加可选的上报逻辑，周期性将邻居表、路由表和运行日志推送到后端，并轮询待执行的远程命令，执行后回传结果。
+\end{itemize}
+三者组合形成“节点数据上报 → 后端汇聚 → 前端展示/下发命令”的闭环，可在不破坏现有路由与可靠传输逻辑的前提下为实验网络增加可视化与远程管控能力。
+
+\subsection{启动流程}
+典型流程如下：
+\begin{enumerate}
+  \item 在服务器或本地启动 FastAPI 后端（默认 \texttt{localhost:8080}），保持命令转发与状态存储接口可用。
+  \item 启动 React 前端开发服务器或构建产物，浏览器访问前端页面后即可查看实时路由/邻居快照并使用终端输入命令。
+  \item 在至少一个节点进程中配置后端地址（如 \texttt{http://localhost:8080}），节点开始周期性上报状态并监听远程命令；其余节点照常运行 DV 路由、可靠传输与 ICMP 逻辑。
+\end{enumerate}
+前端与后端均采用轻量接口，超时与异常不会阻塞串口收发主流程。
+
+\subsection{交互与安全}
+前端终端支持 \texttt{ping <ID> [count]}、\texttt{tracert <ID>}、\texttt{send <ID> <msg>}、\texttt{table} 等命令，与本地 CLI 行为一致；路由与日志在前端以表格与实时流形式呈现，便于教学演示与故障排查。后端接口限定为内网访问并启用基础输入校验，避免恶意命令或过长报文造成节点阻塞。
+
+\paragraph{效果图展示}
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.8\textwidth]{pic/visualization.png}
+  \caption{网络拓扑与路由信息可视化展示}
+  \label{fig:visualization}
+\end{figure}

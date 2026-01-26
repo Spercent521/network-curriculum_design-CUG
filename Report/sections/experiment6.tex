@@ -1,27 +1,87 @@
 \section{实验六：简单网络管理实验（应用层）}
 
 \subsection{功能要求}
-% 简述对应实验的核心目标、需实现的功能点、预期效果
-本实验位于应用层，旨在掌握网络管理工具原理。需基于下层提供的可靠传输服务，实现ping（可达性检测与RTT测量）和traceroute（路径追踪）功能。
+在前述可靠多机通信的基础上实现应用层网络管理：
+\begin{itemize}
+  \item 实现 \texttt{ping}：检测可达性并测量 RTT。
+  \item 实现 \texttt{traceroute}：通过逐步增加 TTL 获取路径中间节点。
+  \item 增强网络层：引入 TTL 处理与 ICMP 报文，支持 Time Exceeded 反馈；支持可选可视化日志上报与远程命令下发。
+\end{itemize}
 
 \subsection{实现思路}
-% 硬件拓扑、功能流程、协议定义
 \subsubsection{硬件拓扑}
+沿用实验四/五的多串口网状拓扑，所有节点运行 \texttt{NetworkNode}，可任选一台作为前端可视化上报节点。拓扑结构仍为 wolf、win、mac、A、B 等节点的网状连接，每个节点配备多个串口与邻居节点建立点对点链路，形成多跳转发路径。拓扑示意中可标出负责可视化上报的节点（例如 wolf 节点配置了可视化后端地址），该节点周期性地将本地的邻居表、路由表与日志信息上报到后端服务器，同时接收后端下发的远程命令并执行，实现了网络管理的可视化与远程控制能力。其他节点则专注于网络层的 TTL 处理、ICMP 报文处理与路由转发，共同构建了支持应用层管理工具的完整网络环境。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\textwidth]{pic/exp6_topology.drawio.png}
+\caption{实验六硬件拓扑示意图}
+\label{fig:exp6_topology}
+\end{figure}
 
 \subsubsection{功能流程}
+应用层网络管理系统的工作流程在前述路由与可靠传输的基础上增加了 TTL 处理、ICMP 报文生成与解析、可视化上报等机制，形成了完整的网络管理闭环。
+
+\textbf{节点初始化与路由维护} → 节点启动时，首先选择多个串口、设置本机 ID，并可选配置可视化后端地址（如 \url{http://localhost:8080}），完成路由层的初始化并启动 HELLO 和 DV 的周期性广播任务；后台任务持续周期发送 HELLO/DV 报文以维护路由表，同时检测邻居超时。
+
+\textbf{可视化上报与远程命令接收} → 配置了可视化后端的节点，周期性（如每 5 秒）调用 REST 接口上报本地邻居表、路由表与日志信息到后端服务器，同时向后端查询是否有待执行的远程命令，接收到命令后（如 \texttt{ping mac}、\texttt{tracert A}、\texttt{send B Hello} 等）使用本地命令执行器处理，将执行结果返回后端，实现了远程控制与可视化管理的闭环。
+
+\textbf{ICMP Ping 探测}（\texttt{ping <ID>} 命令）→ 用户执行 \texttt{ping mac 4} 发送 4 次 Echo Request，每次节点封装 ICMP Echo Request 报文（含序号、时间戳），初始 TTL 设为较大值（如 16），通过网络层路由发送到目标节点，同时记录发送时间戳并等待 Echo Reply 事件；目标节点收到 Echo Request 后，立即封装 Echo Reply 报文（携带原始时间戳和接收时间戳）返回源节点，源节点收到 Echo Reply 后计算 RTT（往返时延 = 当前时间 - 原始时间戳）并输出；多次 ping 完成后统计平均 RTT 与丢包率。
+
+\textbf{ICMP Traceroute 探测}（\texttt{tracert <ID>} 命令）→ 用户执行 \texttt{tracert mac}，节点从 TTL=1 开始逐步递增发送 ICMP Echo Request 探测包，每个中间路由节点在转发时发现 TTL 递减至 0 后，立即调用 \texttt{\_send\_icmp\_time\_exceeded} 返回 Time Exceeded 报文给源节点，源节点收到 Time Exceeded 时记录该跳路由的 ID 与时延，继续递增 TTL 发送下一跳探测（TTL=2、3、...），直至收到目标节点的 Echo Reply 或达到最大跳数（如 16 跳）为止，最终输出完整的路由路径列表（如 \texttt{1: win (RTT 15ms), 2: mac (RTT 30ms)}）。
+
+\textbf{常规消息与 ICMP 并行工作} → 常规消息仍可通过 \texttt{send <ID> <msg>} 发送，复用运输层的可靠传输通道（\texttt{PROTO\_TRANSPORT}），与 ICMP 报文在网络层共存互不干扰；用户可通过 \texttt{table} 命令查看当前路由表状态。
+
+\textbf{网络异常处理} → TTL 每转发一跳递减 1，降至 0 时触发 Time Exceeded 返还源端；链路断开时，目标不可达则应用层工具显示超时或不可达提示；链路恢复后重新执行 ping/tracert 命令则能够正常输出结果。
+
+\textbf{优雅退出} → 用户输入 \texttt{exit} 命令后，程序停止所有后台任务（包括可视化上报、HELLO/DV 广播、邻居超时检测等），逐个关闭所有串口资源，最终优雅终止。
 
 \subsubsection{协议定义}
+网络层数据包：\texttt{DATA|Src|Dst|TTL|Payload}。\texttt{Payload} 按子协议分发：
+\begin{itemize}
+  \item \texttt{ICMP}：\texttt{ICMP|ECHO\_REQ|Seq|Ts}、\texttt{ICMP|ECHO\_REP|Seq|OrigTs|RecvTs}、\texttt{ICMP|TIME\_EXC|Seq|RouterID}。
+  \item \texttt{PROTO\_TRANSPORT}：向下兼容实验五的可靠消息载荷。
+\end{itemize}
+TTL 每转发一跳减 $1$，降至 $0$ 时触发 Time Exceeded 返还源端。
 
 \subsection{模块设计}
-% 模块划分、调用关系、接口定义
 \subsubsection{模块划分}
+\begin{itemize}
+  \item \textbf{网络与 ICMP 核心}（\texttt{Code\_Refactored/Experiment6/network\_app.py}）：\texttt{NetworkNode} 处理 TTL、ICMP 逻辑、路由表维护及串口监听。
+  \item \textbf{可视化上报}：周期调用 REST 接口上报邻居、路由与日志，可接受后端下发的远程命令并重用本地命令执行器。
+  \item \textbf{事件管理}：\texttt{icmp\_events/icmp\_results} 记录序列号对应的等待与结果，驱动 ping/traceroute 阻塞等待。
+\end{itemize}
 
 \subsubsection{接口定义}
+\begin{itemize}
+  \item \texttt{do\_ping(target, count)}：发送多次 Echo Request，等待事件，统计 RTT 与丢包率。
+  \item \texttt{do\_traceroute(target)}：递增 TTL 发送探测包，收集每跳的 Time Exceeded 或最终 Echo Reply。
+  \item \texttt{\_process\_network\_packet(src, dst, ttl, payload)}：处理 TTL、转发或交付到 ICMP/可靠消息分发。
+\end{itemize}
 
 \subsection{功能实现}
-% 核心代码、实现效果、性能分析
 \subsubsection{核心代码}
+TTL 在进入 \texttt{\_process\_network\_packet} 时递减，耗尽即调用 \texttt{\_send\_icmp\_time\_exceeded} 返回源端。ICMP Echo Reply 中携带原始时间戳以计算 RTT；Time Exceeded 返回触发 traceroute 的每跳记录。串口发送均加锁避免并发写冲突，端口异常会被关闭并从邻居表移除。
 
 \subsubsection{实现效果}
+在 6 节点网络中，应用层网络管理工具的各项功能均运行稳定且效果显著。
+
+\textbf{ICMP Ping 测试} → wolf 节点执行 \texttt{ping mac 4} 发送 4 次 Echo Request，每次往返的 RTT 被准确计算并输出（如 RTT: 150ms、145ms、152ms、148ms），最终统计平均 RTT 为 148.75ms，丢包率为 0\%，验证了 ICMP Echo 机制的正确性与时间戳计算的准确性；若目标节点不可达，则显示超时或不可达提示，用户清晰了解网络连接状态。
+
+\textbf{Traceroute 路由发现} → wolf 节点执行 \texttt{tracert mac}，程序从 TTL=1 开始逐跳探测，第 1 跳收到 win 节点返回的 Time Exceeded（延迟 15ms），第 2 跳收到 mac 节点返回的 Echo Reply（延迟 30ms），最终输出完整路由路径：\texttt{1: win (15ms), 2: mac (30ms)}，验证了 TTL 递减与 Time Exceeded 机制的有效性，用户可清晰了解从源到目标的完整转发路径。
+
+\textbf{链路故障与恢复} → 拔掉某条链路后执行 \texttt{ping} 或 \texttt{tracert}，若目标不可达则显示超时或不可达提示；若链路恢复后重新执行 ping 或 tracert，则能够重新发现新路径或恢复到原有路径，证明了应用层工具与底层动态路由的紧密配合与自适应能力。
+
+\textbf{可视化管理与远程控制} → 若配置了后端地址，wolf 节点周期性上报邻居表、路由表与日志信息到后端服务器，管理员通过 Web 界面可实时查看网络拓扑、路由表变化与日志流；同时可远程触发 \texttt{ping}、\texttt{tracert}、\texttt{send}、\texttt{table} 等命令并查看执行结果，实现了网络管理的可视化与远程控制。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{pic/exp6_results.png}
+\caption{实验六实现效果截图}
+\label{fig:exp6_results}
+\end{figure}
 
 \subsubsection{性能分析}
+TTL 与 ICMP 处理逻辑轻量，瓶颈仍在串口速率与路由收敛时间。事件等待以秒级超时控制，避免阻塞。可视化上报设置 0.5s 超时，不阻塞主流程。
+
+\paragraph{AI 提示词} 应用层工具设计时的提示词示例：\emph{“在已有串口 DV 路由器上实现 ICMP 支持，包括 TTL 递减、Time Exceeded、Echo Request/Reply，并提供 ping 和 traceroute 命令，可选将路由与日志上报到 HTTP 接口。”}

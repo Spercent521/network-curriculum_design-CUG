@@ -60,3 +60,6 @@ __pycache__/
 __pycache__/
 # *.py[cod]将生成的 PDF 跟踪到仓库，取消下面行的注释
 # *.pdf
+
+Report/Main.pdf
+Report/Main.tex
